@@ -2,11 +2,8 @@ package com.futo.platformplayer
 
 import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Context.POWER_SERVICE
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.PowerManager
 import android.webkit.CookieManager
 import androidx.lifecycle.lifecycleScope
 import com.futo.platformplayer.activities.MainActivity
@@ -27,7 +24,6 @@ import com.futo.platformplayer.states.StateBackup
 import com.futo.platformplayer.states.StateCache
 import com.futo.platformplayer.states.StateMeta
 import com.futo.platformplayer.states.StatePayment
-import com.futo.platformplayer.states.StatePlayer
 import com.futo.platformplayer.states.StatePolycentric
 import com.futo.platformplayer.states.StateUpdate
 import com.futo.platformplayer.stores.FragmentedStorage
@@ -37,9 +33,7 @@ import com.futo.platformplayer.views.fields.DropdownFieldOptionsId
 import com.futo.platformplayer.views.fields.FieldForm
 import com.futo.platformplayer.views.fields.FormField
 import com.futo.platformplayer.views.fields.FormFieldButton
-import com.futo.platformplayer.views.fields.FormFieldWarning
 import com.futo.platformplayer.views.overlays.slideup.SlideUpMenuItem
-import com.stripe.android.customersheet.injection.CustomerSheetViewModelModule_Companion_ContextFactory.context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,7 +144,6 @@ class Settings : FragmentedStorageFileJson() {
     fun import() {
         val act = SettingsActivity.getActivity() ?: return;
         val intent = MainActivity.getImportOptionsIntent(act);
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK;
         act.startActivity(intent);
     }
 
@@ -260,6 +253,9 @@ class Settings : FragmentedStorageFileJson() {
 
         @FormField(R.string.progress_bar, FieldForm.TOGGLE, R.string.progress_bar_description, 6)
         var progressBar: Boolean = true;
+
+        @FormField(R.string.hide_hidden_from_search, FieldForm.TOGGLE, R.string.hide_hidden_from_search_description, 7)
+        var hidefromSearch: Boolean = false;
 
 
         fun getSearchFeedStyle(): FeedStyle {
@@ -419,17 +415,13 @@ class Settings : FragmentedStorageFileJson() {
         var preferredPreviewQuality: Int = 5;
         fun getPreferredPreviewQualityPixelCount(): Int = preferedQualityToPixels(preferredPreviewQuality);
 
-
         @FormField(R.string.simplify_sources, FieldForm.TOGGLE, R.string.simplify_sources_description, 4)
         var simplifySources: Boolean = true;
 
-        @FormField(R.string.auto_rotate, FieldForm.DROPDOWN, -1, 5)
-        @DropdownFieldOptionsId(R.array.system_enabled_disabled_array)
-        var autoRotate: Int = 2;
+        @FormField(R.string.always_allow_reverse_landscape_auto_rotate, FieldForm.TOGGLE, R.string.always_allow_reverse_landscape_auto_rotate_description, 5)
+        var alwaysAllowReverseLandscapeAutoRotate: Boolean = true
 
-        fun isAutoRotate() = (autoRotate == 1 && !StatePlayer.instance.rotationLock) || (autoRotate == 2 && StateApp.instance.getCurrentSystemAutoRotate() && !StatePlayer.instance.rotationLock);
-
-        @FormField(R.string.background_behavior, FieldForm.DROPDOWN, -1, 7)
+        @FormField(R.string.background_behavior, FieldForm.DROPDOWN, -1, 6)
         @DropdownFieldOptionsId(R.array.player_background_behavior)
         var backgroundPlay: Int = 2;
 
@@ -484,17 +476,6 @@ class Settings : FragmentedStorageFileJson() {
         @FormField(R.string.reverse_portrait, FieldForm.TOGGLE, R.string.reverse_portrait_description, 14)
         var reversePortrait: Boolean = false;
 
-        @FormField(R.string.rotation_zone, FieldForm.DROPDOWN, R.string.rotation_zone_description, 15)
-        @DropdownFieldOptionsId(R.array.rotation_zone)
-        var rotationZone: Int = 2;
-
-        @FormField(R.string.stability_threshold_time, FieldForm.DROPDOWN, R.string.stability_threshold_time_description, 16)
-        @DropdownFieldOptionsId(R.array.rotation_threshold_time)
-        var stabilityThresholdTime: Int = 1;
-
-        @FormField(R.string.full_autorotate_lock, FieldForm.TOGGLE, R.string.full_autorotate_lock_description, 17)
-        var fullAutorotateLock: Boolean = false;
-
         @FormField(R.string.prefer_webm, FieldForm.TOGGLE, R.string.prefer_webm_description, 18)
         var preferWebmVideo: Boolean = false;
         @FormField(R.string.prefer_webm_audio, FieldForm.TOGGLE, R.string.prefer_webm_audio_description, 19)
@@ -505,6 +486,9 @@ class Settings : FragmentedStorageFileJson() {
 
         @FormField(R.string.autoplay, FieldForm.TOGGLE, R.string.autoplay, 21)
         var autoplay: Boolean = false;
+
+        @FormField(R.string.delete_watchlist_on_finish, FieldForm.TOGGLE, R.string.delete_watchlist_on_finish_description, 22)
+        var deleteFromWatchLaterAuto: Boolean = true;
     }
 
     @FormField(R.string.comments, "group", R.string.comments_description, 6)
@@ -862,10 +846,14 @@ class Settings : FragmentedStorageFileJson() {
 
         @FormField(R.string.clear_payment, FieldForm.BUTTON, R.string.deletes_license_keys_from_app, 2)
         fun clearPayment() {
-            StatePayment.instance.clearLicenses();
-            SettingsActivity.getActivity()?.let {
-                UIDialogs.toast(it, it.getString(R.string.licenses_cleared_might_require_app_restart));
-                it.reloadSettings();
+            SettingsActivity.getActivity()?.let { context ->
+                UIDialogs.showConfirmationDialog(context, "Are you sure you want to delete your license?", {
+                    StatePayment.instance.clearLicenses();
+                    SettingsActivity.getActivity()?.let {
+                        UIDialogs.toast(it, it.getString(R.string.licenses_cleared_might_require_app_restart));
+                        it.reloadSettings();
+                    }
+                })
             }
         }
     }
@@ -874,12 +862,16 @@ class Settings : FragmentedStorageFileJson() {
     var other = Other();
     @Serializable
     class Other {
-        @FormField(R.string.bypass_rotation_prevention, FieldForm.TOGGLE, R.string.bypass_rotation_prevention_description, 1)
-        @FormFieldWarning(R.string.bypass_rotation_prevention_warning)
-        var bypassRotationPrevention: Boolean = false;
+        @FormField(R.string.playlist_delete_confirmation, FieldForm.TOGGLE, R.string.playlist_delete_confirmation_description, 2)
+        var playlistDeleteConfirmation: Boolean = true;
+        @FormField(R.string.playlist_allow_dups, FieldForm.TOGGLE, R.string.playlist_allow_dups_description, 3)
+        var playlistAllowDups: Boolean = true;
 
-        @FormField(R.string.enable_polycentric, FieldForm.TOGGLE, R.string.can_be_disabled_when_you_are_experiencing_issues, 1)
+        @FormField(R.string.enable_polycentric, FieldForm.TOGGLE, R.string.can_be_disabled_when_you_are_experiencing_issues, 4)
         var polycentricEnabled: Boolean = true;
+
+        @FormField(R.string.polycentric_local_cache, FieldForm.TOGGLE, R.string.polycentric_local_cache_description, 5)
+        var polycentricLocalCache: Boolean = true;
     }
 
     @FormField(R.string.gesture_controls, FieldForm.GROUP, -1, 19)
@@ -919,7 +911,7 @@ class Settings : FragmentedStorageFileJson() {
         var enabled: Boolean = true;
 
         @FormField(R.string.broadcast, FieldForm.TOGGLE, R.string.broadcast_description, 1)
-        var broadcast: Boolean = true;
+        var broadcast: Boolean = false;
 
         @FormField(R.string.connect_discovered, FieldForm.TOGGLE, R.string.connect_discovered_description, 2)
         var connectDiscovered: Boolean = true;

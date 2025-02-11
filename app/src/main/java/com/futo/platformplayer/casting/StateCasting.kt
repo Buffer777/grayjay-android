@@ -64,7 +64,7 @@ class StateCasting {
     private val _scopeMain = CoroutineScope(Dispatchers.Main);
     private val _storage: CastingDeviceInfoStorage = FragmentedStorage.get();
 
-    private val _castServer = ManagedHttpServer(9999);
+    private val _castServer = ManagedHttpServer();
     private var _started = false;
 
     var devices: HashMap<String, CastingDevice> = hashMapOf();
@@ -1245,7 +1245,7 @@ class StateCasting {
 
                     val videoExecutor = _videoExecutor;
                     if (videoExecutor != null) {
-                        val data = videoExecutor.executeRequest(originalUrl, httpContext.headers)
+                        val data = videoExecutor.executeRequest("GET", originalUrl, null, httpContext.headers)
                         httpContext.respondBytes(200, HttpHeaders().apply {
                             put("Content-Type", mediaType)
                         }, data);
@@ -1263,7 +1263,7 @@ class StateCasting {
 
                     val audioExecutor = _audioExecutor;
                     if (audioExecutor != null) {
-                        val data = audioExecutor.executeRequest(originalUrl, httpContext.headers)
+                        val data = audioExecutor.executeRequest("GET", originalUrl, null, httpContext.headers)
                         httpContext.respondBytes(200, HttpHeaders().apply {
                             put("Content-Type", mediaType)
                         }, data);

@@ -25,6 +25,7 @@ import com.futo.platformplayer.api.media.models.subtitles.ISubtitleSource
 import com.futo.platformplayer.api.media.models.video.IPlatformVideo
 import com.futo.platformplayer.api.media.models.video.IPlatformVideoDetails
 import com.futo.platformplayer.api.media.models.video.SerializedPlatformVideo
+import com.futo.platformplayer.api.media.platforms.js.JSClient
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSDashManifestRawAudioSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSDashManifestRawSource
 import com.futo.platformplayer.downloads.VideoLocal
@@ -879,6 +880,12 @@ class UISlideOverlays {
             val items = arrayListOf<View>();
             val lastUpdated = StatePlaylists.instance.getLastUpdatedPlaylist();
 
+            val isLimited = video?.url != null && StatePlatform.instance.getContentClientOrNull(video!!.url)?.let {
+                if (it is JSClient)
+                    return@let it.config.reduceFunctionsInLimitedVersion && BuildConfig.IS_PLAYSTORE_BUILD
+                else false;
+            } ?: false;
+
             if (lastUpdated != null) {
                 items.add(
                     SlideUpMenuGroup(container.context, container.context.getString(R.string.recently_used_playlist), "recentlyusedplaylist",
@@ -888,7 +895,8 @@ class UISlideOverlays {
                             "${lastUpdated.videos.size} " + container.context.getString(R.string.videos),
                             tag = "",
                             call = {
-                                StatePlaylists.instance.addToPlaylist(lastUpdated.id, video);
+                                if(StatePlaylists.instance.addToPlaylist(lastUpdated.id, video))
+                                    UIDialogs.appToast("Added to playlist [${lastUpdated?.name}]", false);
                                 StateDownloads.instance.checkForOutdatedPlaylists();
                             }))
                 );
@@ -899,17 +907,18 @@ class UISlideOverlays {
             val watchLater = StatePlaylists.instance.getWatchLater();
             items.add(SlideUpMenuGroup(container.context, container.context.getString(R.string.actions), "actions",
                 (listOf(
-                    SlideUpMenuItem(
-                        container.context,
-                        R.drawable.ic_download,
-                        container.context.getString(R.string.download),
-                        container.context.getString(R.string.download_the_video),
-                        tag = "download",
-                        call = {
-                            showDownloadVideoOverlay(video, container, true);
-                        },
-                        invokeParent = false
-                    ),
+                    if(!isLimited)
+                        SlideUpMenuItem(
+                            container.context,
+                            R.drawable.ic_download,
+                            container.context.getString(R.string.download),
+                            container.context.getString(R.string.download_the_video),
+                            tag = "download",
+                            call = {
+                                showDownloadVideoOverlay(video, container, true);
+                            },
+                            invokeParent = false
+                        ) else null,
                     SlideUpMenuItem(
                         container.context,
                         R.drawable.ic_share,
@@ -936,7 +945,7 @@ class UISlideOverlays {
                             StateMeta.instance.addHiddenCreator(video.author.url);
                             UIDialogs.toast(container.context, "[${video.author.name}] hidden, you may need to reload home");
                         }))
-                        + actions)
+                        + actions).filterNotNull()
             ));
             items.add(
                 SlideUpMenuGroup(container.context, container.context.getString(R.string.add_to), "addto",
@@ -951,7 +960,7 @@ class UISlideOverlays {
                         "${container.context.getString(R.string.add_to)} " + StatePlayer.TYPE_WATCHLATER + "",
                         "${watchLater.size} " + container.context.getString(R.string.videos),
                         tag = "watch later",
-                        call = { StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(video)); }),
+                        call = { StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(video), true); }),
                     SlideUpMenuItem(container.context,
                         R.drawable.ic_history,
                         container.context.getString(R.string.add_to_history),
@@ -983,7 +992,8 @@ class UISlideOverlays {
                     "${playlist.videos.size} " + container.context.getString(R.string.videos),
                     tag = "",
                     call = {
-                        StatePlaylists.instance.addToPlaylist(playlist.id, video);
+                        if(StatePlaylists.instance.addToPlaylist(playlist.id, video))
+                            UIDialogs.appToast("Added to playlist [${playlist.name}]", false);
                         StateDownloads.instance.checkForOutdatedPlaylists();
                     }));
             }
@@ -1010,7 +1020,8 @@ class UISlideOverlays {
                             "${lastUpdated.videos.size} " + container.context.getString(R.string.videos),
                             tag = "",
                             call = {
-                                StatePlaylists.instance.addToPlaylist(lastUpdated.id, video);
+                                if(StatePlaylists.instance.addToPlaylist(lastUpdated.id, video))
+                                    UIDialogs.appToast("Added to playlist [${lastUpdated?.name}]", false);
                                 StateDownloads.instance.checkForOutdatedPlaylists();
                             }))
                 );
@@ -1032,16 +1043,10 @@ class UISlideOverlays {
                         StatePlayer.TYPE_WATCHLATER,
                         "${watchLater.size} " + container.context.getString(R.string.videos),
                         tag = "watch later",
-                        call = { StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(video)); }),
-                    SlideUpMenuItem(
-                        container.context,
-                        R.drawable.ic_download,
-                        container.context.getString(R.string.download),
-                        container.context.getString(R.string.download_the_video),
-                        tag = container.context.getString(R.string.download),
-                        call = { showDownloadVideoOverlay(video, container, true); },
-                        invokeParent = false
-                    ))
+                        call = { StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(video), true);
+                            UIDialogs.appToast("Added to watch later", false);
+                        }),
+                    )
             );
 
             val playlistItems = arrayListOf<SlideUpMenuItem>();
@@ -1067,7 +1072,8 @@ class UISlideOverlays {
                     "${playlist.videos.size} " + container.context.getString(R.string.videos),
                     tag = "",
                     call = {
-                        StatePlaylists.instance.addToPlaylist(playlist.id, video);
+                        if(StatePlaylists.instance.addToPlaylist(playlist.id, video))
+                            UIDialogs.appToast("Added to playlist [${playlist.name}]", false);
                         StateDownloads.instance.checkForOutdatedPlaylists();
                     }));
             }

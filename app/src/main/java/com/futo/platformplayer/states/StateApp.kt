@@ -2,6 +2,8 @@ package com.futo.platformplayer.states
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -20,9 +22,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import com.futo.platformplayer.*
 import com.futo.platformplayer.R
+import com.futo.platformplayer.UIDialogs.Action
+import com.futo.platformplayer.UIDialogs.ActionStyle
+import com.futo.platformplayer.UIDialogs.Companion.showDialog
 import com.futo.platformplayer.activities.CaptchaActivity
 import com.futo.platformplayer.activities.IWithResultLauncher
 import com.futo.platformplayer.activities.MainActivity
+import com.futo.platformplayer.activities.SettingsActivity
 import com.futo.platformplayer.api.media.platforms.js.DevJSClient
 import com.futo.platformplayer.api.media.platforms.js.JSClient
 import com.futo.platformplayer.background.BackgroundWorker
@@ -41,6 +47,7 @@ import com.futo.platformplayer.services.DownloadService
 import com.futo.platformplayer.stores.FragmentedStorage
 import com.futo.platformplayer.stores.v2.ManagedStore
 import com.futo.platformplayer.views.ToastView
+import com.futo.polycentric.core.ApiMethods
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.*
@@ -150,11 +157,8 @@ class StateApp {
 
     //Files
     private var _tempDirectory: File? = null;
+    private var _cacheDirectory: File? = null;
     private var _persistentDirectory: File? = null;
-
-
-    //AutoRotate
-    var systemAutoRotate: Boolean = false;
 
     //Network
     private var _lastMeteredState: Boolean = false;
@@ -192,17 +196,6 @@ class StateApp {
 
         return File(_persistentDirectory, name);
     }
-
-    fun getCurrentSystemAutoRotate(): Boolean {
-        _context?.let {
-            systemAutoRotate = android.provider.Settings.System.getInt(
-                it.contentResolver,
-                android.provider.Settings.System.ACCELEROMETER_ROTATION, 0
-            ) == 1;
-        };
-        return systemAutoRotate;
-    }
-
 
     fun isCurrentMetered(): Boolean {
         ensureConnectivityManager();
@@ -304,9 +297,6 @@ class StateApp {
     fun setGlobalContext(context: Context, coroutineScope: CoroutineScope? = null) {
         _context = context;
         _scope = coroutineScope
-
-        //System checks
-        systemAutoRotate = getCurrentSystemAutoRotate();
     }
 
     fun initializeFiles(force: Boolean = false) {
@@ -318,6 +308,9 @@ class StateApp {
                 _tempDirectory?.deleteRecursively();
             }
             _tempDirectory?.mkdirs();
+            _cacheDirectory = File(context.filesDir, "cache");
+            if(_cacheDirectory?.exists() == false)
+                _cacheDirectory?.mkdirs();
             _persistentDirectory = File(context.filesDir, "persist");
             if(_persistentDirectory?.exists() == false) {
                 _persistentDirectory?.mkdirs();
@@ -377,6 +370,11 @@ class StateApp {
         Logger.i(TAG, "MainApp Starting");
         initializeFiles(true);
 
+        if(Settings.instance.other.polycentricLocalCache) {
+            Logger.i(TAG, "Initialize Polycentric Disk Cache")
+            _cacheDirectory?.let { ApiMethods.initCache(it) };
+        }
+
         val logFile = File(context.filesDir, "log.txt");
         if (Settings.instance.logging.logLevel > LogLevel.NONE.value) {
             val fileLogConsumer = FileLogConsumer(logFile, LogLevel.fromInt(Settings.instance.logging.logLevel), false);
@@ -419,8 +417,17 @@ class StateApp {
         Logger.onLogSubmitted.subscribe {
             scopeOrNull?.launch(Dispatchers.Main) {
                 try {
-                    if (it != null) {
-                        UIDialogs.toast("Uploaded $it", true);
+                    if (!it.isNullOrEmpty()) {
+                        (SettingsActivity.getActivity() ?: contextOrNull)?.let { c ->
+                            val okButtonAction = Action(c.getString(R.string.ok), {}, ActionStyle.PRIMARY)
+                            val copyButtonAction = Action(c.getString(R.string.copy), {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Log id", it)
+                                clipboard.setPrimaryClip(clip)
+                            }, ActionStyle.NONE)
+
+                            showDialog(c, R.drawable.ic_error, "Uploaded $it", null, null, 0, copyButtonAction, okButtonAction)
+                        }
                     } else {
                         UIDialogs.toast("Failed to upload");
                     }

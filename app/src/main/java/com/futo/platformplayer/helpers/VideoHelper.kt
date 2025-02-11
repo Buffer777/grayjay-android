@@ -13,16 +13,15 @@ import com.futo.platformplayer.api.media.models.streams.IVideoSourceDescriptor
 import com.futo.platformplayer.api.media.models.streams.VideoUnMuxedSourceDescriptor
 import com.futo.platformplayer.api.media.models.streams.sources.IAudioSource
 import com.futo.platformplayer.api.media.models.streams.sources.IAudioUrlSource
-import com.futo.platformplayer.api.media.models.streams.sources.IAudioUrlWidevineSource
 import com.futo.platformplayer.api.media.models.streams.sources.IHLSManifestAudioSource
 import com.futo.platformplayer.api.media.models.streams.sources.IHLSManifestSource
 import com.futo.platformplayer.api.media.models.streams.sources.IVideoSource
 import com.futo.platformplayer.api.media.models.streams.sources.IVideoUrlSource
+import com.futo.platformplayer.api.media.models.streams.sources.IWidevineSource
 import com.futo.platformplayer.api.media.models.video.IPlatformVideoDetails
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSAudioUrlRangeSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSDashManifestRawAudioSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSDashManifestRawSource
-import com.futo.platformplayer.api.media.platforms.js.models.sources.JSSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSVideoUrlRangeSource
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.others.Language
@@ -47,8 +46,8 @@ class VideoHelper {
             return false
         }
 
-        fun isDownloadable(source: IVideoSource) = source is IVideoUrlSource || source is IHLSManifestSource || source is JSDashManifestRawSource;
-        fun isDownloadable(source: IAudioSource) = (source is IAudioUrlSource || source is IHLSManifestAudioSource || source is JSDashManifestRawAudioSource) && source !is IAudioUrlWidevineSource
+        fun isDownloadable(source: IVideoSource) = (source is IVideoUrlSource || source is IHLSManifestSource || source is JSDashManifestRawSource) && source !is IWidevineSource
+        fun isDownloadable(source: IAudioSource) = (source is IAudioUrlSource || source is IHLSManifestAudioSource || source is JSDashManifestRawAudioSource) && source !is IWidevineSource
 
         fun selectBestVideoSource(desc: IVideoSourceDescriptor, desiredPixelCount : Int, prefContainers : Array<String>) : IVideoSource? = selectBestVideoSource(desc.videoSources.toList(), desiredPixelCount, prefContainers);
         fun selectBestVideoSource(sources: Iterable<IVideoSource>, desiredPixelCount : Int, prefContainers : Array<String>) : IVideoSource? {
@@ -191,21 +190,21 @@ class VideoHelper {
         }
 
 
-        fun estimateSourceSize(source: IVideoSource?): Int {
+        fun estimateSourceSize(source: IVideoSource?): Long {
             if(source == null) return 0;
             if(source is IVideoSource) {
                 if(source.bitrate ?: 0 <= 0 || source.duration.toInt() == 0)
                     return 0;
-                return (source.duration / 8).toInt() * source.bitrate!!;
+                return (source.duration / 8) * source.bitrate!!;
             }
             else return 0;
         }
-        fun estimateSourceSize(source: IAudioSource?): Int {
+        fun estimateSourceSize(source: IAudioSource?): Long {
             if(source == null) return 0;
             if(source is IAudioSource) {
                 if(source.bitrate <= 0 || source.duration?.toInt() ?: 0 == 0)
                     return 0;
-                return (source.duration!! / 8).toInt() * source.bitrate;
+                return (source.duration!! / 8) * source.bitrate;
             }
             else return 0;
         }

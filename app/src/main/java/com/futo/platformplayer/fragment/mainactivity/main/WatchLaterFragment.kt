@@ -96,11 +96,11 @@ class WatchLaterFragment : MainFragment() {
         }
 
         override fun onVideoOrderChanged(videos: List<IPlatformVideo>) {
-            StatePlaylists.instance.updateWatchLater(ArrayList(videos.map { it as SerializedPlatformVideo }));
+            StatePlaylists.instance.updateWatchLater(ArrayList(videos.map { it as SerializedPlatformVideo }), true);
         }
         override fun onVideoRemoved(video: IPlatformVideo) {
             if (video is SerializedPlatformVideo) {
-                StatePlaylists.instance.removeFromWatchLater(video);
+                StatePlaylists.instance.removeFromWatchLater(video, true);
             }
         }
 

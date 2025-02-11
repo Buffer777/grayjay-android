@@ -11,7 +11,8 @@ let Type = {
         Streams: "STREAMS",
         Mixed: "MIXED",
         Live: "LIVE",
-        Subscriptions: "SUBSCRIPTIONS"
+        Subscriptions: "SUBSCRIPTIONS",
+        Shorts: "SHORTS"
     },
     Order: {
         Chronological: "CHRONOLOGICAL"
@@ -244,6 +245,7 @@ class PlatformVideo extends PlatformContent {
         this.viewCount = obj.viewCount ?? -1; //Long
 
         this.isLive = obj.isLive ?? false; //Boolean
+        this.isShort = !!obj.isShort ?? false;
     }
 }
 class PlatformVideoDetails extends PlatformVideo {
@@ -260,6 +262,7 @@ class PlatformVideoDetails extends PlatformVideo {
 
         this.rating = obj.rating ?? null; //IRating
         this.subtitles = obj.subtitles ?? [];
+        this.isShort = !!obj.isShort ?? false;
     }
 }
 
@@ -367,6 +370,16 @@ class VideoUrlSource {
             this.requestModifier = obj.requestModifier;
     }
 }
+class VideoUrlWidevineSource extends VideoUrlSource {
+    constructor(obj) {
+        super(obj);
+        this.plugin_type = "VideoUrlWidevineSource";
+
+        this.licenseUri = obj.licenseUri;
+        if(obj.getLicenseRequestExecutor)
+            this.getLicenseRequestExecutor = obj.getLicenseRequestExecutor;
+    }
+}
 class VideoUrlRangeSource extends VideoUrlSource {
     constructor(obj) {
         super(obj);
@@ -399,8 +412,26 @@ class AudioUrlWidevineSource extends AudioUrlSource {
         super(obj);
         this.plugin_type = "AudioUrlWidevineSource";
 
-        this.bearerToken = obj.bearerToken;
         this.licenseUri = obj.licenseUri;
+        if(obj.getLicenseRequestExecutor)
+            this.getLicenseRequestExecutor = obj.getLicenseRequestExecutor;
+
+        // deprecated api conversion
+        if(obj.bearerToken) {
+            this.getLicenseRequestExecutor = () => {
+                return {
+                    executeRequest: (url, _headers, _method, license_request_data) => {
+                        return http.POST(
+                           url,
+                           license_request_data,
+                           { Authorization: `Bearer ${obj.bearerToken}` },
+                           false,
+                           true
+                       ).body
+                    }
+                }
+            }
+        }
     }
 }
 class AudioUrlRangeSource extends AudioUrlSource {
@@ -441,6 +472,16 @@ class DashSource {
             this.language = obj.language;
         if(obj.requestModifier)
             this.requestModifier = obj.requestModifier;
+    }
+}
+class DashWidevineSource extends DashSource {
+    constructor(obj) {
+        super(obj);
+        this.plugin_type = "DashWidevineSource";
+
+        this.licenseUri = obj.licenseUri;
+        if(obj.getLicenseRequestExecutor)
+            this.getLicenseRequestExecutor = obj.getLicenseRequestExecutor;
     }
 }
 class DashManifestRawSource {

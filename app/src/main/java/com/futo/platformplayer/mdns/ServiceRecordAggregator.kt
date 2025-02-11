@@ -55,21 +55,25 @@ class ServiceRecordAggregator {
             if (_cts != null) throw Exception("Already started.")
 
             _cts = CoroutineScope(Dispatchers.Default).launch {
-                while (isActive) {
-                    val now = Date()
-                    synchronized(_currentServices) {
-                        _cachedAddressRecords.forEach { it.value.removeAll { record -> now.after(record.expirationTime) } }
-                        _cachedTxtRecords.entries.removeIf { now.after(it.value.expirationTime) }
-                        _cachedSrvRecords.entries.removeIf { now.after(it.value.expirationTime) }
-                        _cachedPtrRecords.forEach { it.value.removeAll { record -> now.after(record.expirationTime) } }
+                try {
+                    while (isActive) {
+                        val now = Date()
+                        synchronized(_currentServices) {
+                            _cachedAddressRecords.forEach { it.value.removeAll { record -> now.after(record.expirationTime) } }
+                            _cachedTxtRecords.entries.removeIf { now.after(it.value.expirationTime) }
+                            _cachedSrvRecords.entries.removeIf { now.after(it.value.expirationTime) }
+                            _cachedPtrRecords.forEach { it.value.removeAll { record -> now.after(record.expirationTime) } }
 
-                        val newServices = getCurrentServices()
-                        _currentServices.clear()
-                        _currentServices.addAll(newServices)
+                            val newServices = getCurrentServices()
+                            _currentServices.clear()
+                            _currentServices.addAll(newServices)
+                        }
+
+                        onServicesUpdated?.invoke(_currentServices.toList())
+                        delay(5000)
                     }
-
-                    onServicesUpdated?.invoke(_currentServices.toList())
-                    delay(5000)
+                } catch (e: Throwable) {
+                    Logger.e(TAG, "Unexpected failure in MDNS loop", e)
                 }
             }
         }
@@ -83,6 +87,7 @@ class ServiceRecordAggregator {
     }
 
     fun add(packet: DnsPacket) {
+        val currentServices: List<DnsService>
         val dnsResourceRecords = packet.answers + packet.additionals + packet.authorities
         val txtRecords = dnsResourceRecords.filter { it.type == ResourceRecordType.TXT.value.toInt() }.map { it to it.getDataReader().readTXTRecord() }
         val aRecords = dnsResourceRecords.filter { it.type == ResourceRecordType.A.value.toInt() }.map { it to it.getDataReader().readARecord() }
@@ -99,7 +104,6 @@ class ServiceRecordAggregator {
         aaaaRecords.forEach { builder.appendLine("AAAA ${it.first.name} ${it.first.type} ${it.first.clazz} TTL ${it.first.timeToLive}: ${it.second.address}") }
         Logger.i(TAG, "$builder")*/
 
-        val currentServices: MutableList<DnsService>
         synchronized(this._currentServices) {
             ptrRecords.forEach { record ->
                 val cachedPtrRecord = _cachedPtrRecords.getOrPut(record.first.name) { mutableListOf() }

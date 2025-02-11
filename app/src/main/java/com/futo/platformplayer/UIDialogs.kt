@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.text.Layout
 import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
@@ -198,7 +199,6 @@ class UIDialogs {
             dialog.show();
         }
 
-
         fun showDialog(context: Context, icon: Int, text: String, textDetails: String? = null, code: String? = null, defaultCloseAction: Int, vararg actions: Action) {
             val builder = AlertDialog.Builder(context);
             val view = LayoutInflater.from(context).inflate(R.layout.dialog_multi_button, null);
@@ -214,18 +214,19 @@ class UIDialogs {
                 this.text = text;
             };
             view.findViewById<TextView>(R.id.dialog_text_details).apply {
-                if(textDetails == null)
+                if (textDetails == null)
                     this.visibility = View.GONE;
-                else
+                else {
                     this.text = textDetails;
+                }
             };
             view.findViewById<TextView>(R.id.dialog_text_code).apply {
-                if(code == null)
-                    this.visibility = View.GONE;
+                if (code == null) this.visibility = View.GONE;
                 else {
                     this.text = code;
                     this.movementMethod = ScrollingMovementMethod.getInstance();
                     this.visibility = View.VISIBLE;
+                    this.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
                 }
             };
             view.findViewById<LinearLayout>(R.id.dialog_buttons).apply {
@@ -348,6 +349,13 @@ class UIDialogs {
             showDialog(context, R.drawable.ic_error, text, null, null, 0, cancelButtonAction, confirmButtonAction)
         }
 
+        fun showConfirmationDialog(context: Context, text: String, action: () -> Unit, cancelAction: (() -> Unit)? = null, doNotAskAgainAction: (() -> Unit)? = null) {
+            val confirmButtonAction = Action(context.getString(R.string.confirm), action, ActionStyle.PRIMARY)
+            val cancelButtonAction = Action(context.getString(R.string.cancel), cancelAction ?: {}, ActionStyle.ACCENT)
+            val doNotAskAgain = Action(context.getString(R.string.do_not_ask_again), doNotAskAgainAction ?: {}, ActionStyle.NONE)
+            showDialog(context, R.drawable.ic_error, text, null, null, 0, doNotAskAgain, cancelButtonAction, confirmButtonAction)
+        }
+
         fun showUpdateAvailableDialog(context: Context, lastVersion: Int, hideExceptionButtons: Boolean = false) {
             val dialog = AutoUpdateDialog(context);
             registerDialogOpened(dialog);
@@ -360,8 +368,8 @@ class UIDialogs {
             }
         }
 
-        fun showChangelogDialog(context: Context, lastVersion: Int) {
-            val dialog = ChangelogDialog(context);
+        fun showChangelogDialog(context: Context, lastVersion: Int, changelogs: Map<Int, String>? = null) {
+            val dialog = ChangelogDialog(context, changelogs);
             registerDialogOpened(dialog);
             dialog.setOnDismissListener { registerDialogClosed(dialog) };
             dialog.show();

@@ -36,6 +36,12 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
+        <receiver android:name=".receivers.MediaButtonReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <service android:name=".services.MediaPlaybackService"
             android:enabled="true"
             android:foregroundServiceType="mediaPlayback" />
@@ -51,9 +57,8 @@
             android:name=".activities.MainActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true"
-            android:screenOrientation="sensorPortrait"
             android:theme="@style/Theme.FutoVideo.NoActionBar"
-            android:launchMode="singleTask"
+            android:launchMode="singleInstance"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true">
 
@@ -146,11 +151,9 @@
                 <data android:scheme="polycentric" />
             </intent-filter>
         </activity>
-
         <activity
             android:name=".activities.TestActivity"
             android:theme="@style/Theme.FutoVideo.NoActionBar" />
-
         <activity
             android:name=".activities.SettingsActivity"
             android:screenOrientation="sensorPortrait"
@@ -173,7 +176,6 @@
             android:theme="@style/Theme.FutoVideo.NoActionBar" />
         <activity
             android:name=".activities.AddSourceActivity"
-            android:screenOrientation="sensorPortrait"
             android:exported="true"
             android:theme="@style/Theme.FutoVideo.NoActionBar">
             <intent-filter>
@@ -217,17 +219,12 @@
             android:name=".activities.ManageTabsActivity"
             android:screenOrientation="sensorPortrait"
             android:theme="@style/Theme.FutoVideo.NoActionBar" />
-
         <activity
             android:name=".activities.QRCaptureActivity"
             android:screenOrientation="sensorPortrait"
             android:theme="@style/Theme.FutoVideo.NoActionBar" />
         <activity
             android:name=".activities.FCastGuideActivity"
-            android:screenOrientation="sensorPortrait"
-            android:theme="@style/Theme.FutoVideo.NoActionBar" />
-        <activity
-            android:name=".activities.PolycentricWhyActivity"
             android:screenOrientation="sensorPortrait"
             android:theme="@style/Theme.FutoVideo.NoActionBar" />
         <activity

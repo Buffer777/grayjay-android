@@ -70,7 +70,7 @@ class PlaylistFragment : MainFragment() {
         private var _editPlaylistOverlay: SlideUpMenuOverlay? = null;
         private var _url: String? = null;
 
-        private val _taskLoadPlaylist: TaskHandler<String, IPlatformPlaylistDetails>;
+        private val _taskLoadPlaylist: TaskHandler<String, Playlist>;
 
         constructor(fragment: PlaylistFragment, inflater: LayoutInflater) : super(inflater) {
             _fragment = fragment;
@@ -137,16 +137,16 @@ class PlaylistFragment : MainFragment() {
                 );
             };
 
-            _taskLoadPlaylist = TaskHandler<String, IPlatformPlaylistDetails>(
+            _taskLoadPlaylist = TaskHandler<String, Playlist>(
                 StateApp.instance.scopeGetter,
                 {
-                    return@TaskHandler StatePlatform.instance.getPlaylist(it);
+                    return@TaskHandler StatePlatform.instance.getPlaylist(it).toPlaylist();
                 })
                 .success {
                     setName(it.name);
                     //TODO: Implement support for pagination
-                    setVideos(it.toPlaylist().videos, false);
-                    setVideoCount(it.videoCount);
+                    setVideos(it.videos, false);
+                    setMetadata(it.videos.size, it.videos.sumOf { it.duration });
                     setLoading(false);
                 }
                 .exception<Throwable> {
@@ -174,7 +174,7 @@ class PlaylistFragment : MainFragment() {
                 if (parameter != null) {
                     setName(parameter.name)
                     setVideos(parameter.videos, true)
-                    setVideoCount(parameter.videos.size)
+                    setMetadata(parameter.videos.size, parameter.videos.sumOf { it.duration })
                     setButtonDownloadVisible(true)
                     setButtonEditVisible(true)
 
@@ -187,7 +187,7 @@ class PlaylistFragment : MainFragment() {
                 } else {
                     setName(null)
                     setVideos(null, false)
-                    setVideoCount(-1)
+                    setMetadata(-1, -1);
                     setButtonDownloadVisible(false)
                     setButtonEditVisible(false)
                 }
@@ -195,7 +195,7 @@ class PlaylistFragment : MainFragment() {
                 _playlist = null
                 _url = parameter.url
 
-                setVideoCount(parameter.videoCount)
+                setMetadata(parameter.videoCount, -1);
                 setName(parameter.name)
                 setVideos(null, false)
                 setButtonDownloadVisible(false)
@@ -208,7 +208,7 @@ class PlaylistFragment : MainFragment() {
 
                 setName(null)
                 setVideos(null, false)
-                setVideoCount(-1)
+                setMetadata(-1, -1);
                 setButtonDownloadVisible(false)
                 setButtonEditVisible(false)
 

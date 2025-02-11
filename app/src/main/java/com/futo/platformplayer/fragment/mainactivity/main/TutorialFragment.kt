@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.futo.platformplayer.*
 import com.futo.platformplayer.api.media.IPlatformClient
@@ -58,7 +59,15 @@ class TutorialFragment : MainFragment() {
     }
 
     @SuppressLint("ViewConstructor")
-    class TutorialView : LinearLayout {
+    class TutorialView(fragment: TutorialFragment, inflater: LayoutInflater) :
+        ScrollView(inflater.context) {
+        init {
+            addView(TutorialContainer(fragment, inflater))
+        }
+    }
+
+    @SuppressLint("ViewConstructor")
+    class TutorialContainer : LinearLayout {
         val fragment: TutorialFragment
 
         constructor(fragment: TutorialFragment, inflater: LayoutInflater) : super(inflater.context) {
@@ -142,6 +151,7 @@ class TutorialFragment : MainFragment() {
         override val rating: IRating = RatingLikes(-1)
         override val viewCount: Long = -1
         override val video: IVideoSourceDescriptor = TutorialVideoSourceDescriptor(videoUrl, duration, width, height)
+        override val isShort: Boolean = false;
         override fun getComments(client: IPlatformClient): IPager<IPlatformComment> {
             return EmptyPager()
         }
@@ -150,7 +160,7 @@ class TutorialFragment : MainFragment() {
     }
 
     companion object {
-        val TAG = "HomeFragment";
+        const val TAG = "HomeFragment";
 
         fun newInstance() = TutorialFragment().apply {}
         val initialSetupVideos = listOf(

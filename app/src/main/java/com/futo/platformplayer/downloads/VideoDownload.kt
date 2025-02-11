@@ -100,6 +100,7 @@ class VideoDownload {
 
     var requireVideoSource: Boolean = false;
     var requireAudioSource: Boolean = false;
+    var requiredCheck: Boolean = false;
 
     @Contextual
     @Transient
@@ -164,7 +165,7 @@ class VideoDownload {
         onStateChanged.emit(newState);
     }
 
-    constructor(video: IPlatformVideo, targetPixelCount: Long? = null, targetBitrate: Long? = null) {
+    constructor(video: IPlatformVideo, targetPixelCount: Long? = null, targetBitrate: Long? = null, optionalSources: Boolean = false) {
         this.video = SerializedPlatformVideo.fromVideo(video);
         this.videoSource = null;
         this.audioSource = null;
@@ -175,8 +176,9 @@ class VideoDownload {
         this.requiresLiveVideoSource = false;
         this.requiresLiveAudioSource = false;
         this.targetVideoName = videoSource?.name;
-        this.requireVideoSource = targetPixelCount != null
+        this.requireVideoSource = targetPixelCount != null;
         this.requireAudioSource = targetBitrate != null; //TODO: May not be a valid check.. can only be determined after live fetch?
+        this.requiredCheck = optionalSources;
     }
     constructor(video: IPlatformVideoDetails, videoSource: IVideoSource?, audioSource: IAudioSource?, subtitleSource: SubtitleRawSource?) {
         this.video = SerializedPlatformVideo.fromVideo(video);
@@ -250,6 +252,30 @@ class VideoDownload {
             if(original !is IPlatformVideoDetails)
                 throw IllegalStateException("Original content is not media?");
 
+            if(requiredCheck) {
+                if(original.video is VideoUnMuxedSourceDescriptor) {
+                    if(requireVideoSource) {
+                        if((original.video as VideoUnMuxedSourceDescriptor).audioSources.any() && !original.video.videoSources.any()) {
+                            requireVideoSource = false;
+                            targetPixelCount = null;
+                        }
+                    }
+                    if(requireAudioSource) {
+                        if(!(original.video as VideoUnMuxedSourceDescriptor).audioSources.any() && original.video.videoSources.any()) {
+                            requireAudioSource = false;
+                            targetBitrate = null;
+                        }
+                    }
+                }
+                else {
+                    if(requireAudioSource) {
+                        requireAudioSource = false;
+                        targetBitrate = null;
+                    }
+                }
+                requiredCheck = false;
+            }
+
             if(original.video.hasAnySource() && !original.isDownloadable()) {
                 Logger.i(TAG, "Attempted to download unsupported video [${original.name}]:${original.url}");
                 throw DownloadException("Unsupported video for downloading", false);
@@ -284,6 +310,10 @@ class VideoDownload {
                 if(vsource == null)
                     vsource = VideoHelper.selectBestVideoSource(videoSources, targetPixelCount!!.toInt(), arrayOf())
                 //    ?: throw IllegalStateException("Could not find a valid video source for video");
+                if(vsource is JSSource) {
+                    this.hasVideoRequestExecutor = this.hasVideoRequestExecutor || vsource.hasRequestExecutor;
+                    this.requiresLiveVideoSource = this.hasVideoRequestExecutor || (vsource is JSDashManifestRawSource && vsource.hasGenerate);
+                }
 
                 if(vsource == null) {
                     videoSource = null;
@@ -335,6 +365,12 @@ class VideoDownload {
                     asource = VideoHelper.selectBestAudioSource(audioSources, arrayOf(), null, targetBitrate)
                         ?: if(videoSource != null ) null
                         else throw DownloadException("Could not find a valid video or audio source for download")
+
+                if(asource is JSSource) {
+                    this.hasVideoRequestExecutor = this.hasVideoRequestExecutor || asource.hasRequestExecutor;
+                    this.requiresLiveVideoSource = this.hasVideoRequestExecutor || (asource is JSDashManifestRawSource && asource.hasGenerate);
+                }
+
                 if(asource == null) {
                     audioSource = null;
                     if(!original.video.isUnMuxed || original.video.videoSources.size == 0)
@@ -663,7 +699,7 @@ class VideoDownload {
                 val url = foundTemplateUrl.replace("\$Number\$", indexCounter.toString());
 
                 val data = if(executor != null)
-                    executor.executeRequest(url, mapOf());
+                    executor.executeRequest("GET", url, null, mapOf());
                 else {
                     val resp = client.get(url, mutableMapOf());
                     if(!resp.isOk)
@@ -1056,7 +1092,7 @@ class VideoDownload {
             StateDownloads.instance.updateCachedVideo(existing);
         }
         else {
-            val newVideo = VideoLocal(videoDetails!!);
+            val newVideo = VideoLocal(videoDetails!!, OffsetDateTime.now());
             if(localVideoSource != null)
                 newVideo.videoSource.add(localVideoSource);
             if(localAudioSource != null)

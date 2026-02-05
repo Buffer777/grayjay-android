@@ -3,9 +3,11 @@ package com.futo.platformplayer.states
 import android.content.ContentResolver
 import android.content.Context
 import android.os.StatFs
+import androidx.documentfile.provider.DocumentFile
 import com.futo.platformplayer.R
 import com.futo.platformplayer.Settings
 import com.futo.platformplayer.UIDialogs
+import com.futo.platformplayer.activities.IWithResultLauncher
 import com.futo.platformplayer.api.http.ManagedHttpClient
 import com.futo.platformplayer.api.media.PlatformID
 import com.futo.platformplayer.api.media.models.streams.sources.IAudioSource
@@ -46,6 +48,17 @@ class StateDownloads {
     private val _downloadsStat = StatFs(_downloadsDirectory.absolutePath);
 
     private val _downloaded = FragmentedStorage.storeJson<VideoLocal>("downloaded")
+        .withOnModified({
+            synchronized(_downloadedSet) {
+                if(!_downloadedSet.contains(it.id))
+                    _downloadedSet.add(it.id);
+            }
+        }, {
+            synchronized(_downloadedSet) {
+                if(_downloadedSet.contains(it.id))
+                    _downloadedSet.remove(it.id);
+            }
+        })
         .load()
         .apply { afterLoadingDownloaded(this) };
     private val _downloading = FragmentedStorage.storeJson<VideoDownload>("downloading")
@@ -85,9 +98,6 @@ class StateDownloads {
         Logger.i("StateDownloads", "Deleting local video ${id.value}");
         val downloaded = getCachedVideo(id);
         if(downloaded != null) {
-            synchronized(_downloadedSet) {
-                _downloadedSet.remove(id);
-            }
             _downloaded.delete(downloaded);
         }
         onDownloadedChanged.emit();
@@ -169,6 +179,7 @@ class StateDownloads {
 
     fun removeDownload(download: VideoDownload) {
         download.isCancelled = true;
+        download.cleanup();
         _downloading.delete(download);
         onDownloadsChanged.emit();
     }
@@ -261,9 +272,6 @@ class StateDownloads {
                 if(existing.groupID == null) {
                     existing.groupID = VideoDownload.GROUP_WATCHLATER;
                     existing.groupType = VideoDownload.GROUP_WATCHLATER;
-                    synchronized(_downloadedSet) {
-                        _downloadedSet.add(existing.id);
-                    }
                     _downloaded.save(existing);
                 }
             }
@@ -306,9 +314,6 @@ class StateDownloads {
                 if(existing.groupID == null) {
                     existing.groupID = playlist.id;
                     existing.groupType = VideoDownload.GROUP_PLAYLIST;
-                    synchronized(_downloadedSet) {
-                        _downloadedSet.add(existing.id);
-                    }
                     _downloaded.save(existing);
                 }
             }
@@ -379,7 +384,7 @@ class StateDownloads {
     }
     private fun validateDownload(videoState: VideoDownload) {
         if(_downloading.hasItem { it.videoEither.url == videoState.videoEither.url })
-            throw IllegalStateException("Video [${videoState.name}] is already queued for dowload");
+            throw IllegalStateException("Video [${videoState.name}] is already queued for download");
 
         val existing = getCachedVideo(videoState.id);
         if(existing != null) {
@@ -435,7 +440,7 @@ class StateDownloads {
         } else {
             throw NotImplementedError("Unsuported scheme");
         }
-        return if (subtitles != null) SubtitleRawSource(subtitle.name, subtitle.format, subtitles!!) else null;
+        return if (subtitles != null) SubtitleRawSource(subtitle.name, subtitle.language, subtitle.format, subtitles!!) else null;
     }
 
     fun cleanupDownloads(): Pair<Int, Long> {
@@ -466,6 +471,65 @@ class StateDownloads {
         return _downloadsDirectory;
     }
 
+    fun exportPlaylist(context: Context, playlistId: String) {
+        if(context is IWithResultLauncher)
+            StateApp.instance.requestDirectoryAccess(context, "Export Playlist", "To export playlist to directory", null) {
+                if (it == null)
+                    return@requestDirectoryAccess;
+
+                val root = DocumentFile.fromTreeUri(context, it!!);
+
+                val playlist = StatePlaylists.instance.getPlaylist(playlistId);
+                var localVideos = StateDownloads.instance.getDownloadedVideosPlaylist(playlistId);
+                if(playlist != null) {
+                    val missing = playlist.videos
+                                .filter { vid -> !localVideos.any { it.id.value == null || it.id.value == vid.id.value  } }
+                                .map { getCachedVideo(it.id) }
+                                .filterNotNull();
+                    if(missing.size > 0)
+                        localVideos = localVideos + missing;
+                };
+
+                var lastNotifyTime = -1L;
+
+                UIDialogs.showDialogProgress(context) {
+                    StateApp.instance.scopeOrNull?.launch(Dispatchers.IO) {
+                        it.setText("Exporting videos..");
+                        var i = 0;
+                        var success = 0;
+                        for (video in localVideos) {
+                            withContext(Dispatchers.Main) {
+                                it.setText("Exporting videos...(${i}/${localVideos.size})");
+                                //it.setProgress(i.toDouble() / localVideos.size);
+                            }
+
+                            try {
+                                val export = VideoExport(video, video.videoSource.firstOrNull(), video.audioSource.firstOrNull(), video.subtitlesSources.firstOrNull());
+                                Logger.i(TAG, "Exporting [${export.videoLocal.name}] started");
+
+                                val file = export.export(context, { progress ->
+                                    val now = System.currentTimeMillis();
+                                    if (lastNotifyTime == -1L || now - lastNotifyTime > 100) {
+                                        it.setProgress(progress);
+                                        lastNotifyTime = now;
+                                    }
+                                }, root);
+                                success++;
+                            } catch(ex: Throwable) {
+                                Logger.e(TAG, "Failed export [${video.name}]: ${ex.message}", ex);
+                            }
+                            i++;
+                        }
+                        withContext(Dispatchers.Main) {
+                            it.setProgress(1f);
+                            it.dismiss();
+                            UIDialogs.appToast("Finished exporting playlist (${success} videos${if(i < success) ", ${i} errors" else ""})");
+                        }
+                    };
+                }
+            }
+    }
+
     fun export(context: Context, videoLocal: VideoLocal, videoSource: LocalVideoSource?, audioSource: LocalAudioSource?, subtitleSource: LocalSubtitleSource?) {
         var lastNotifyTime = -1L;
 
@@ -477,13 +541,15 @@ class StateDownloads {
                 try {
                     Logger.i(TAG, "Exporting [${export.videoLocal.name}] started");
 
-                    val file = export.export(context) { progress ->
+                    val file = export.export(context, { progress ->
                         val now = System.currentTimeMillis();
                         if (lastNotifyTime == -1L || now - lastNotifyTime > 100) {
-                            it.setProgress(progress);
+                            StateApp.instance.scopeOrNull?.launch(Dispatchers.Main) {
+                                it.setProgress(progress);
+                            }
                             lastNotifyTime = now;
                         }
-                    }
+                    }, null);
 
                     withContext(Dispatchers.Main) {
                         it.setProgress(100.0f)

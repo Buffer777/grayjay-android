@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Resources
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.icu.util.Output
 import android.os.Build
 import android.os.Looper
 import android.os.OperationCanceledException
@@ -27,14 +25,26 @@ import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.PlatformVideoWithTime
 import com.futo.platformplayer.others.PlatformLinkMovementMethod
 import java.io.ByteArrayInputStream
-import java.io.File
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.InterfaceAddress
+import java.net.NetworkInterface
+import java.net.SocketException
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.security.SecureRandom
+import java.time.OffsetDateTime
 import java.util.*
 import java.util.concurrent.ThreadLocalRandom
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
+import androidx.core.graphics.scale
+import com.bumptech.glide.RequestBuilder
+import com.bumptech.glide.load.resource.bitmap.DownsampleStrategy
 
 private val _allowedCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ";
 fun getRandomString(sizeOfRandomString: Int): String {
@@ -66,7 +76,14 @@ fun warnIfMainThread(context: String) {
 }
 
 fun ensureNotMainThread() {
-    if (Looper.myLooper() == Looper.getMainLooper()) {
+    val isMainLooper = try {
+        Looper.myLooper() == Looper.getMainLooper()
+    } catch (e: Throwable) {
+        //Ignore, for unit tests where its not mocked
+        false
+    }
+
+    if (isMainLooper) {
         Logger.e("Utility", "Throwing exception because a function that should not be called on main thread, is called on main thread")
         throw IllegalStateException("Cannot run on main thread")
     }
@@ -85,7 +102,7 @@ fun String.isHexColor(): Boolean {
 
 fun IPlatformClient.fromPool(pool: PlatformMultiClientPool) = pool.getClientPooled(this);
 
-fun IPlatformVideo.withTimestamp(sec: Long) =  PlatformVideoWithTime(this, sec);
+fun IPlatformVideo.withTimestamp(sec: Long) = PlatformVideoWithTime(this, sec);
 
 fun DocumentFile.getInputStream(context: Context) = context.contentResolver.openInputStream(this.uri);
 fun DocumentFile.getOutputStream(context: Context) = context.contentResolver.openOutputStream(this.uri);
@@ -97,23 +114,6 @@ fun DocumentFile.writeBytes(context: Context, byteArray: ByteArray) = context.co
     it.write(byteArray);
     it.flush();
 };
-
-fun loadBitmap(url: String): Bitmap {
-    try {
-        val client = ManagedHttpClient();
-        val response = client.get(url);
-        if (response.isOk && response.body != null) {
-            val bitmapStream = response.body.byteStream();
-            val bitmap = BitmapFactory.decodeStream(bitmapStream);
-            return bitmap;
-        } else {
-            throw Exception("Failed to find data at URL.");
-        }
-    } catch (e: Throwable) {
-        Logger.w("Utility", "Exception thrown while downloading bitmap.", e);
-        throw e;
-    }
-}
 
 fun TextView.setPlatformPlayerLinkMovementMethod(context: Context) {
     this.movementMethod = PlatformLinkMovementMethod(context);
@@ -269,7 +269,7 @@ fun <T> findNewIndex(originalArr: List<T>, newArr: List<T>, item: T): Int{
         }
     }
     if(newIndex < 0)
-        return originalArr.size;
+        return newArr.size;
     else
         return newIndex;
 }
@@ -278,4 +278,175 @@ fun ByteBuffer.toUtf8String(): String {
     val remainingBytes = ByteArray(remaining())
     get(remainingBytes)
     return String(remainingBytes, Charsets.UTF_8)
+}
+
+fun generateReadablePassword(length: Int): String {
+    val validChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+    val secureRandom = SecureRandom()
+    val randomBytes = ByteArray(length)
+    secureRandom.nextBytes(randomBytes)
+    val sb = StringBuilder(length)
+    for (byte in randomBytes) {
+        val index = (byte.toInt() and 0xFF) % validChars.length
+        sb.append(validChars[index])
+    }
+    return sb.toString()
+}
+
+fun ByteArray.toGzip(): ByteArray {
+    if (this == null || this.isEmpty()) return ByteArray(0)
+
+    val gzipTimeStart = OffsetDateTime.now();
+
+    val outputStream = ByteArrayOutputStream()
+    GZIPOutputStream(outputStream).use { gzip ->
+        gzip.write(this)
+    }
+    val result = outputStream.toByteArray();
+    Logger.i("Utility", "Gzip compression time: ${gzipTimeStart.getNowDiffMiliseconds()}ms");
+    return result;
+}
+
+fun ByteArray.fromGzip(): ByteArray {
+    if (this == null || this.isEmpty()) return ByteArray(0)
+
+    val inputStream = ByteArrayInputStream(this)
+    val outputStream = ByteArrayOutputStream()
+
+    GZIPInputStream(inputStream).use { gzip ->
+        val buffer = ByteArray(1024)
+        var bytesRead: Int
+        while (gzip.read(buffer).also { bytesRead = it } != -1) {
+            outputStream.write(buffer, 0, bytesRead)
+        }
+    }
+    return outputStream.toByteArray()
+}
+
+fun findCandidateAddresses(): List<InetAddress> {
+    val candidates = NetworkInterface.getNetworkInterfaces()
+        .toList()
+        .asSequence()
+        .filter(::isUsableInterface)
+        .flatMap { nif ->
+            nif.interfaceAddresses
+                .asSequence()
+                .mapNotNull { ia ->
+                    ia.address.takeIf(::isUsableAddress)?.let { addr ->
+                        nif to ia
+                    }
+                }
+        }
+        .toList()
+
+    return candidates
+        .sortedWith(
+            compareBy<Pair<NetworkInterface, InterfaceAddress>>(
+                { addressScore(it.second.address) },
+                { interfaceScore(it.first) },
+                { -it.second.networkPrefixLength.toInt() },
+                { -it.first.mtu }
+            )
+        ).map { it.second.address }
+}
+
+fun findPreferredAddress(): InetAddress? {
+    val candidates = NetworkInterface.getNetworkInterfaces()
+        .toList()
+        .asSequence()
+        .filter(::isUsableInterface)
+        .flatMap { nif ->
+            nif.interfaceAddresses
+                .asSequence()
+                .mapNotNull { ia ->
+                    ia.address.takeIf(::isUsableAddress)?.let { addr ->
+                        nif to ia
+                    }
+                }
+        }
+        .toList()
+
+    return candidates
+        .minWithOrNull(
+            compareBy<Pair<NetworkInterface, InterfaceAddress>>(
+                { addressScore(it.second.address) },
+                { interfaceScore(it.first) },
+                { -it.second.networkPrefixLength.toInt() },
+                { -it.first.mtu }
+            )
+        )?.second?.address
+}
+
+private fun isUsableInterface(nif: NetworkInterface): Boolean {
+    val name = nif.name.lowercase()
+    return try {
+        // must be up, not loopback/virtual/PtP, have a MAC, not Docker/tun/etc.
+        nif.isUp
+            && !nif.isLoopback
+            && !nif.isPointToPoint
+            && !nif.isVirtual
+            && !name.startsWith("docker")
+            && !name.startsWith("veth")
+            && !name.startsWith("br-")
+            && !name.startsWith("virbr")
+            && !name.startsWith("vmnet")
+            && !name.startsWith("tun")
+            && !name.startsWith("tap")
+    } catch (e: SocketException) {
+        false
+    }
+}
+
+private fun isUsableAddress(addr: InetAddress): Boolean {
+    return when {
+        addr.isAnyLocalAddress -> false // 0.0.0.0 / ::
+        addr.isLoopbackAddress -> false
+        addr.isLinkLocalAddress -> false // 169.254.x.x or fe80::/10
+        addr.isMulticastAddress -> false
+        else -> true
+    }
+}
+
+private fun interfaceScore(nif: NetworkInterface): Int {
+    val name = nif.name.lowercase()
+    return when {
+        name.matches(Regex("^(eth|enp|eno|ens|em)\\d+")) -> 0
+        name.startsWith("eth") || name.contains("ethernet") -> 0
+        name.matches(Regex("^(wlan|wlp)\\d+")) -> 1
+        name.contains("wi-fi") || name.contains("wifi") -> 1
+        else -> 2
+    }
+}
+
+fun addressScore(addr: InetAddress): Int {
+    return when (addr) {
+        is Inet4Address -> {
+            val octets = addr.address.map { it.toInt() and 0xFF }
+            when {
+                octets[0] == 10 -> 0  // 10/8
+                octets[0] == 192 && octets[1] == 168 -> 0  // 192.168/16
+                octets[0] == 172 && octets[1] in 16..31 -> 0  // 172.16–31/12
+                else -> 1  // public IPv4
+            }
+        }
+        is Inet6Address -> {
+            // ULA (fc00::/7) vs global vs others
+            val b0 = addr.address[0].toInt() and 0xFF
+            when {
+                (b0 and 0xFE) == 0xFC -> 2  // ULA
+                (b0 and 0xE0) == 0x20 -> 3  // global
+                else -> 4
+            }
+        }
+        else -> Int.MAX_VALUE
+    }
+}
+
+fun <T> Enumeration<T>.toList(): List<T> = Collections.list(this)
+
+fun <T> RequestBuilder<T>.withMaxSizePx(maxSizePx: Int = 1920): RequestBuilder<T> {
+    return this;
+        //.downsample(DownsampleStrategy.AT_MOST)
+        //.override(maxSizePx, maxSizePx)
+        //.centerInside()
 }

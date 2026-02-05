@@ -411,6 +411,7 @@
     <string name="unhandled_exception_in_vs">Exception non gérée dans VS</string>
     <string name="send_exception_to_developers">Envoyer l\'exception aux développeurs…</string>
     <string name="your_license_key_has_been_set_an_app_restart_might_be_required">Votre clé de licence a été définie !\nUn redémarrage de l\'application peut être nécessaire.</string>
+    <string name="qr_code_too_large_use_text_below">Code QR trop volumineux. Utilisez le texte ci-dessous pour partager votre profil.</string>
     <string name="invalid_license_format">Format de licence invalide</string>
     <string name="unknown_content_format">Format de contenu inconnu</string>
     <string name="unknown_file_format">Format de fichier inconnu</string>
@@ -688,6 +689,14 @@
         <item>Continuer la lecture</item>
         <item>Superposition du lecteur</item>
     </string-array>
+    <string-array name="seek_offset_duration">
+        <item>3 secondes</item>
+        <item>5 secondes</item>
+        <item>10 secondes</item>
+        <item>20 secondes</item>
+        <item>30 secondes</item>
+        <item>60 secondes</item>
+    </string-array>
     <string-array name="resume_after_preview">
         <item>Reprendre depuis le début</item>
         <item>Reprendre après 10s</item>
@@ -703,5 +712,20 @@
     <string-array name="comments_sortby_array">
         <item>Newest</item>
         <item>Oldest</item>
+    </string-array>
+    <string-array name="app_languages">
+        <item>Système</item>
+        <item>Anglais (EN)</item>
+        <item>Allemand (DE)</item>
+        <item>Espagnol (ES)</item>
+        <item>Portugais (PT)</item>
+        <item>Français (FR)</item>
+        <item>Japonais (JA)</item>
+        <item>Coréen (KO)</item>
+        <item>Chinois (ZH)</item>
+        <item>Russe (RU)</item>
+        <item>Arabe (AR)</item>
+        <item>Italien (IT)</item>
+        <item>Turc (TR)</item>
     </string-array>
 </resources>

@@ -1,5 +1,8 @@
 package com.futo.platformplayer.views.adapters
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -11,6 +14,7 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.futo.platformplayer.R
 import com.futo.platformplayer.Settings
+import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.api.media.models.comments.IPlatformComment
 import com.futo.platformplayer.api.media.models.comments.LazyComment
 import com.futo.platformplayer.api.media.models.comments.PolycentricPlatformComment
@@ -18,8 +22,6 @@ import com.futo.platformplayer.api.media.models.ratings.RatingLikeDislikes
 import com.futo.platformplayer.api.media.models.ratings.RatingLikes
 import com.futo.platformplayer.constructs.Event1
 import com.futo.platformplayer.fixHtmlLinks
-import com.futo.platformplayer.fullyBackfillServersAnnounceExceptions
-import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.setPlatformPlayerLinkMovementMethod
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StatePolycentric
@@ -29,6 +31,7 @@ import com.futo.platformplayer.views.LoaderView
 import com.futo.platformplayer.views.others.CreatorThumbnail
 import com.futo.platformplayer.views.pills.PillButton
 import com.futo.platformplayer.views.pills.PillRatingLikesDislikes
+import com.futo.polycentric.core.ApiMethods
 import com.futo.polycentric.core.Opinion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,6 +44,7 @@ class CommentViewHolder : ViewHolder {
     private val _imageLikeIcon: ImageView;
     private val _textLikes: TextView;
     private val _imageDislikeIcon: ImageView;
+    private val _buttonCopy: PillButton;
     private val _textDislikes: TextView;
     private val _buttonReplies: PillButton;
     private val _layoutRating: LinearLayout;
@@ -64,6 +68,7 @@ class CommentViewHolder : ViewHolder {
         _textMetadata = itemView.findViewById(R.id.text_metadata);
         _textBody = itemView.findViewById(R.id.text_body);
         _imageLikeIcon = itemView.findViewById(R.id.image_like_icon);
+        _buttonCopy = itemView.findViewById(R.id.image_copy);
         _textLikes = itemView.findViewById(R.id.text_likes);
         _imageDislikeIcon = itemView.findViewById(R.id.image_dislike_icon);
         _textDislikes = itemView.findViewById(R.id.text_dislikes);
@@ -81,28 +86,32 @@ class CommentViewHolder : ViewHolder {
                 throw Exception("Not implemented for non polycentric comments")
             }
 
-            if (args.hasLiked) {
-                args.processHandle.opinion(c.reference, Opinion.like);
+            val newOpinion: Opinion = if (args.hasLiked) {
+                Opinion.like
             } else if (args.hasDisliked) {
-                args.processHandle.opinion(c.reference, Opinion.dislike);
+                Opinion.dislike
             } else {
-                args.processHandle.opinion(c.reference, Opinion.neutral);
+                Opinion.neutral
             }
 
             _layoutComment.alpha = if (args.dislikes > 2 && args.dislikes.toFloat() / (args.likes + args.dislikes).toFloat() >= 0.7f) 0.5f else 1.0f;
 
             StateApp.instance.scopeOrNull?.launch(Dispatchers.IO) {
-                try {
-                    Logger.i(TAG, "Started backfill");
-                    args.processHandle.fullyBackfillServersAnnounceExceptions();
-                    Logger.i(TAG, "Finished backfill");
-                } catch (e: Throwable) {
-                    Logger.e(TAG, "Failed to backfill servers.", e)
-                }
+                ApiMethods.setOpinion(args.processHandle, c.reference, newOpinion)
             }
 
             StatePolycentric.instance.updateLikeMap(c.reference, args.hasLiked, args.hasDisliked)
         };
+
+        _buttonCopy.setTransparant()
+        _buttonCopy.onClick.subscribe {
+            val clipboard = viewGroup.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val text = comment?.message.orEmpty()
+            val clip = ClipData.newPlainText("Comment", text)
+            clipboard.setPrimaryClip(clip)
+            UIDialogs.toast(viewGroup.context, "Copied", false)
+            true
+        }
 
         _creatorThumbnail.onClick.subscribe {
             val c = comment ?: return@subscribe;
@@ -127,7 +136,7 @@ class CommentViewHolder : ViewHolder {
             onDelete.emit(c);
         }
 
-        _textBody.setPlatformPlayerLinkMovementMethod(viewGroup.context);
+        _textBody.setPlatformPlayerLinkMovementMethod(viewGroup.context)
     }
 
     fun bind(comment: IPlatformComment, readonly: Boolean) {

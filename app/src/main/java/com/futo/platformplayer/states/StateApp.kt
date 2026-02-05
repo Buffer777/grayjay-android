@@ -16,10 +16,12 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.DisplayMetrics
 import android.util.Log
+import android.webkit.CookieManager
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
+import com.curlbind.Libcurl
 import com.futo.platformplayer.*
 import com.futo.platformplayer.R
 import com.futo.platformplayer.UIDialogs.Action
@@ -28,7 +30,6 @@ import com.futo.platformplayer.UIDialogs.Companion.showDialog
 import com.futo.platformplayer.activities.CaptchaActivity
 import com.futo.platformplayer.activities.IWithResultLauncher
 import com.futo.platformplayer.activities.MainActivity
-import com.futo.platformplayer.activities.SettingsActivity
 import com.futo.platformplayer.api.media.platforms.js.DevJSClient
 import com.futo.platformplayer.api.media.platforms.js.JSClient
 import com.futo.platformplayer.background.BackgroundWorker
@@ -37,19 +38,24 @@ import com.futo.platformplayer.constructs.Event0
 import com.futo.platformplayer.constructs.Event1
 import com.futo.platformplayer.engine.exceptions.ScriptCaptchaRequiredException
 import com.futo.platformplayer.fragment.mainactivity.main.HomeFragment
+import com.futo.platformplayer.fragment.mainactivity.main.SettingsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SourceDetailFragment
 import com.futo.platformplayer.logging.AndroidLogConsumer
 import com.futo.platformplayer.logging.FileLogConsumer
 import com.futo.platformplayer.logging.LogLevel
 import com.futo.platformplayer.logging.Logger
+import com.futo.platformplayer.models.ImageVariable
 import com.futo.platformplayer.receivers.AudioNoisyReceiver
 import com.futo.platformplayer.services.DownloadService
 import com.futo.platformplayer.stores.FragmentedStorage
 import com.futo.platformplayer.stores.v2.ManagedStore
 import com.futo.platformplayer.views.ToastView
 import com.futo.polycentric.core.ApiMethods
+import com.futo.polycentric.core.toBase64Url
+import com.futo.platformplayer.polycentric.ModerationsManager
 import kotlinx.coroutines.*
 import java.io.File
+import java.time.OffsetDateTime
 import java.util.*
 import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
@@ -64,6 +70,20 @@ class StateApp {
 
     val sessionId = UUID.randomUUID().toString();
 
+
+    var airplaneMode: Boolean = false
+        get(){
+            return field;
+        }
+        private set(value) {
+            field = value;
+        }
+    val airplaneModeChanged = Event1<Boolean>();
+    fun setAirMode(value: Boolean) {
+        airplaneMode = value;
+        airplaneModeChanged.emit(airplaneMode);
+    }
+
     var privateMode: Boolean = false
         get(){
             return field;
@@ -76,6 +96,9 @@ class StateApp {
         privateMode = value;
         privateModeChanged.emit(privateMode);
     }
+
+    var hasMediaStoreAudioPermission: Boolean = false;
+    var hasMediaStoreVideoPermission: Boolean = false;
 
     fun getExternalGeneralDirectory(context: Context): DocumentFile? {
         val generalUri = Settings.instance.storage.getStorageGeneralUri();
@@ -134,8 +157,12 @@ class StateApp {
         return _scope;
     }
     val scope: CoroutineScope get() {
-        val thisScope = scopeOrNull
-            ?: throw IllegalStateException("Attempted to use a global lifetime scope while MainActivity is no longer available");
+        val thisScope = scopeOrNull;
+        if(thisScope == null) {
+            //throw IllegalStateException("Attempted to use a global lifetime scope while MainActivity is no longer available");
+            Logger.w(TAG, "Attempted to use a global lifetime scope while MainActivity is no longer available, USING GLOBAL SCOPE");
+            return GlobalScope;
+        }
         return thisScope;
     }
     val scopeGetter: ()->CoroutineScope get() {
@@ -154,6 +181,14 @@ class StateApp {
             ?: throw IllegalStateException("Attempted to use a global context while MainActivity is no longer available");
         return thisContext;
     }
+    val activity: MainActivity? get() {
+        val context = contextOrNull;
+        if(context is MainActivity)
+            return context;
+        return null;
+    }
+
+    private var _mainId: String? = null;
 
     //Files
     private var _tempDirectory: File? = null;
@@ -164,6 +199,9 @@ class StateApp {
     private var _lastMeteredState: Boolean = false;
     private var _connectivityManager: ConnectivityManager? = null;
     private var _lastNetworkState: NetworkState = NetworkState.UNKNOWN;
+    private var _lastConnectivityChange: OffsetDateTime? = null;
+    val lastConnectivityChange
+        get() = _lastConnectivityChange;
 
     //Logging
     private var _fileLogConsumer: FileLogConsumer? = null;
@@ -267,36 +305,62 @@ class StateApp {
             };
         }
     }
-    fun requestDirectoryAccess(activity: IWithResultLauncher, name: String, purpose: String? = null, path: Uri?, handle: (Uri?)->Unit)
+    fun requestDirectoryAccess(activity: IWithResultLauncher, name: String, purpose: String? = null, path: Uri?, handle: (Uri?)->Unit) {
+        return requestDirectoryAccess(activity, name, purpose, path, handle, false);
+    }
+    fun requestDirectoryAccess(activity: IWithResultLauncher, name: String, purpose: String? = null, path: Uri?, handle: (Uri?)->Unit, skipDialog: Boolean = false)
     {
         if(activity is Context)
         {
-            UIDialogs.showDialog(activity, R.drawable.ic_security, "Directory required for\n${name}", "Please select a directory for ${name}.\n${purpose}".trim(), null, 0,
-                UIDialogs.Action("Cancel", {}),
-                UIDialogs.Action("Ok", {
-                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-                    if(path != null)
-                        intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, path);
-                    intent.flags = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                        .or(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        .or(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                        .or(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            if(skipDialog) {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                if(path != null)
+                    intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, path);
+                intent.flags = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    .or(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .or(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    .or(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
 
-                    activity.launchForResult(intent, 99) {
-                        if(it.resultCode == Activity.RESULT_OK) {
-                            handle(it.data?.data);
-                        }
-                        else
-                            UIDialogs.showDialogOk(context, R.drawable.ic_security_pred, "No access granted");
-                    };
-                }, UIDialogs.ActionStyle.PRIMARY));
+                activity.launchForResult(intent, 99) {
+                    if(it.resultCode == Activity.RESULT_OK) {
+                        handle(it.data?.data);
+                    }
+                    else
+                        UIDialogs.showDialogOk(context, R.drawable.ic_security_pred, "No access granted");
+                };
+            }
+            else {
+                UIDialogs.showDialog(activity, R.drawable.ic_security, "Directory required for\n${name}", "Please select a directory for ${name}.\n${purpose}".trim(), null, 0,
+                    UIDialogs.Action("Cancel", {}),
+                    UIDialogs.Action("Ok", {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                        if(path != null)
+                            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, path);
+                        intent.flags = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            .or(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            .or(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                            .or(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+
+                        activity.launchForResult(intent, 99) {
+                            if(it.resultCode == Activity.RESULT_OK) {
+                                handle(it.data?.data);
+                            }
+                            else
+                                UIDialogs.showDialogOk(context, R.drawable.ic_security_pred, "No access granted");
+                        };
+                    }, UIDialogs.ActionStyle.PRIMARY));
+            }
+
         }
     }
 
     //Lifecycle
-    fun setGlobalContext(context: Context, coroutineScope: CoroutineScope? = null) {
+    fun setGlobalContext(context: Context, coroutineScope: CoroutineScope? = null, mainId: String? = null) {
+        _mainId = mainId;
         _context = context;
         _scope = coroutineScope
+        Logger.w(TAG, "Scope initialized ${(coroutineScope != null)}\n ${Log.getStackTraceString(Throwable())}")
+
     }
 
     fun initializeFiles(force: Boolean = false) {
@@ -370,9 +434,52 @@ class StateApp {
         Logger.i(TAG, "MainApp Starting");
         initializeFiles(true);
 
+        _scope?.launch(Dispatchers.IO) {
+            try {
+                val caFile = AppCaUpdater.ensureCaBundle(context)
+                Libcurl.setDefaultCAPath(caFile.absolutePath)
+                Logger.i(TAG, "Libcurl initialized")
+            } catch (t: Throwable) {
+                Logger.e(TAG, "Failed to initialize Libcurl", t);
+            }
+        }
+
         if(Settings.instance.other.polycentricLocalCache) {
             Logger.i(TAG, "Initialize Polycentric Disk Cache")
             _cacheDirectory?.let { ApiMethods.initCache(it) };
+        }
+
+        if(Settings.instance.other.shouldClearWebviewCookies()) {
+            try {
+                val cookieManager: CookieManager =
+                    CookieManager.getInstance();
+                cookieManager.removeAllCookies(null);
+            } catch (ex: Throwable) {
+                Logger.e(SourceDetailFragment.Companion.TAG, "Failed to clear cookies", ex);
+            }
+        }
+
+        Logger.i(TAG, "MainApp Starting: Initializing [ModerationsManager]");
+        ModerationsManager.initialize(context);
+
+        Logger.i(TAG, "MainApp Starting: Setting [ModerationLevelProvider]");
+        ApiMethods.setModerationLevelProvider {
+            try {
+                ModerationsManager.getInstance().getCurrentModerationLevels()
+            } catch (e: IllegalStateException) {
+                Logger.e(TAG, "Failed to get moderation levels from manager", e);
+                null
+            }
+        }
+
+        Logger.i(TAG, "MainApp Starting: Setting [ModerationExemptSystemProvider]");
+        ApiMethods.setModerationExemptSystemProvider {
+            try {
+                StatePolycentric.instance.processHandle?.system?.toProto()?.toByteArray()?.toBase64Url()
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Failed to get moderation exempt system from manager", e);
+                null
+            }
         }
 
         val logFile = File(context.filesDir, "log.txt");
@@ -411,14 +518,22 @@ class StateApp {
         }
 
         if (Settings.instance.synchronization.enabled) {
-            StateSync.instance.start()
+            StateSync.instance.start(context)
+        }
+
+        SettingsFragment.onClosed.subscribe {
+            if (Settings.instance.synchronization.enabled) {
+                StateSync.instance.start(context)
+            } else {
+                StateSync.instance.stop()
+            }
         }
 
         Logger.onLogSubmitted.subscribe {
             scopeOrNull?.launch(Dispatchers.Main) {
                 try {
                     if (!it.isNullOrEmpty()) {
-                        (SettingsActivity.getActivity() ?: contextOrNull)?.let { c ->
+                        (StateApp.instance.activity ?: contextOrNull)?.let { c ->
                             val okButtonAction = Action(c.getString(R.string.ok), {}, ActionStyle.PRIMARY)
                             val copyButtonAction = Action(c.getString(R.string.copy), {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -469,30 +584,39 @@ class StateApp {
                 DownloadService.getOrCreateService(context);
         }
 
-        Logger.i(TAG, "MainApp Started: Initialize [AutoUpdate]");
-        val autoUpdateEnabled = Settings.instance.autoUpdate.isAutoUpdateEnabled();
-        val shouldDownload = Settings.instance.autoUpdate.shouldDownload();
-        val backgroundDownload = Settings.instance.autoUpdate.backgroundDownload == 1;
-        when {
-            //Background download
-            autoUpdateEnabled && shouldDownload && backgroundDownload -> {
-                StateUpdate.instance.setShouldBackgroundUpdate(true);
-            }
+        if (Settings.instance.autoUpdate.isAutoUpdateEnabled()) {
+            if (Settings.instance.autoUpdate.shouldBackgroundDownload) {
+                Logger.i(TAG, "MainApp Started: Initialize [AutoUpdate Background]");
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build();
 
-            autoUpdateEnabled && !shouldDownload && backgroundDownload -> {
-                Logger.i(TAG, "Auto update skipped due to wrong network state");
-            }
+                val periodicRequest = PeriodicWorkRequest.Builder(
+                    UpdateCheckWorker::class.java,
+                    12, TimeUnit.HOURS
+                )
+                    .setConstraints(constraints)
+                    .build();
 
-            //Foreground download
-            autoUpdateEnabled -> {
+                val wm = WorkManager.getInstance(context);
+                wm.enqueueUniquePeriodicWork(
+                    UpdateCheckWorker.UNIQUE_WORK_NAME,
+                    ExistingPeriodicWorkPolicy.UPDATE,
+                    periodicRequest
+                );
+
+                val oneTimeRequest = OneTimeWorkRequest.Builder(UpdateCheckWorker::class.java)
+                    .setConstraints(constraints)
+                    .build();
+                wm.enqueue(oneTimeRequest);
+            } else {
+                Logger.i(TAG, "MainApp Started: Initialize [AutoUpdate]");
                 scopeOrNull?.launch(Dispatchers.IO) {
                     StateUpdate.instance.checkForUpdates(context, false)
                 }
             }
-
-            else -> {
-                Logger.i(TAG, "Auto update disabled");
-            }
+        } else {
+            Logger.i(TAG, "AutoUpdate disabled");
         }
 
         Logger.i(TAG, "MainApp Started: Initialize [Noisy]");
@@ -509,22 +633,33 @@ class StateApp {
 
         //Migration
         Logger.i(TAG, "MainApp Started: Check [Migrations]");
-        migrateStores(context, listOf(
-            StateSubscriptions.instance.toMigrateCheck(),
-            StatePlaylists.instance.toMigrateCheck()
-        ).flatten(), 0);
+
+        scopeOrNull?.launch(Dispatchers.IO) {
+            try {
+                migrateStores(context, listOf(
+                    StateSubscriptions.instance.toMigrateCheck(),
+                    StatePlaylists.instance.toMigrateCheck()
+                ).flatten(), 0)
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Failed to migrate stores")
+            }
+        }
 
         if(Settings.instance.subscriptions.fetchOnAppBoot) {
             scope.launch(Dispatchers.IO) {
                 Logger.i(TAG, "MainApp Started: Fetch [Subscriptions]");
                 val subRequestCounts = StateSubscriptions.instance.getSubscriptionRequestCount();
                 val reqCountStr = subRequestCounts.map { "    ${it.key.config.name}: ${it.value}/${it.key.getSubscriptionRateLimit()}" }.joinToString("\n");
-                val isRateLimitReached = !subRequestCounts.any { clientCount -> clientCount.key.getSubscriptionRateLimit()?.let { rateLimit -> clientCount.value > rateLimit } == true };
-                if (isRateLimitReached) {
+                val isBelowRateLimit = !subRequestCounts.any { clientCount ->
+                    clientCount.key.getSubscriptionRateLimit()?.let { rateLimit -> clientCount.value > rateLimit } == true
+                };
+                if (isBelowRateLimit) {
                     Logger.w(TAG, "Subscriptions request on boot, request counts:\n${reqCountStr}");
                     delay(5000);
-                    if(StateSubscriptions.instance.getOldestUpdateTime().getNowDiffMinutes() > 5)
-                        StateSubscriptions.instance.updateSubscriptionFeed(scope, false);
+                    scopeOrNull?.let {
+                        if(StateSubscriptions.instance.getOldestUpdateTime().getNowDiffMinutes() > 5)
+                            StateSubscriptions.instance.updateSubscriptionFeed(it, false);
+                    }
                 }
                 else
                     Logger.w(TAG, "Too many subscription requests required:\n${reqCountStr}");
@@ -536,7 +671,9 @@ class StateApp {
         scheduleBackgroundWork(context, interval != 0, interval);
 
         Logger.i(TAG, "MainApp Started: Initialize [AutoBackup]");
+        Settings.instance.backup.didAskAutoBackup = true; //Some users have issues with it
         if(!Settings.instance.backup.didAskAutoBackup && !Settings.instance.backup.shouldAutomaticBackup()) {
+            /*
             StateAnnouncement.instance.registerAnnouncement("backup", "Set Automatic Backup", "Configure daily backups of your data to restore in case of catastrophic failure.", AnnouncementType.SESSION, null, null, "Configure", {
                 if(context is IWithResultLauncher && !Settings.instance.storage.isStorageMainValid(context)) {
                     UIDialogs.toast("Missing general directory");
@@ -553,6 +690,7 @@ class StateApp {
                 Settings.instance.backup.didAskAutoBackup = true;
                 Settings.instance.save();
             });
+            */
         }
         else if(Settings.instance.backup.didAskAutoBackup && Settings.instance.backup.shouldAutomaticBackup() && !Settings.instance.storage.isStorageMainValid(context)) {
             if(context is IWithResultLauncher) {
@@ -606,8 +744,24 @@ class StateApp {
                         ));
 
                     for(update in updateAvailable)
-                        if(StatePlatform.instance.isClientEnabled(update.first.id))
-                            UIDialogs.showPluginUpdateDialog(context, update.first, update.second);
+                        if(StatePlatform.instance.isClientEnabled(update.first.id)) {
+                            //UIDialogs.showPluginUpdateDialog(context, update.first, update.second);
+                            StateAnnouncement.instance.registerPluginUpdate(update.first, update.second);
+                        }
+                }
+            }
+        }
+
+        scopeOrNull?.launch(Dispatchers.IO) {
+            val enabledPlugins = StatePlatform.instance.getEnabledClients();
+            for(plugin in enabledPlugins) {
+                try {
+                    if(plugin is JSClient) {
+                        if(plugin.descriptor.appSettings.sync.enableHistorySync == true)
+                            StateHistory.instance.syncRemoteHistory(plugin);
+                    }
+                } catch (ex: Throwable) {
+                    Logger.e(TAG, "Failed to update remote history for ${plugin.name}", ex);
                 }
             }
         }
@@ -650,24 +804,20 @@ class StateApp {
             Logger.i("StateApp", "No AutoBackup configured");
     }
 
-
     fun scheduleBackgroundWork(context: Context, active: Boolean = true, intervalMinutes: Int = 60 * 12) {
         try {
             val wm = WorkManager.getInstance(context);
 
-            if(active) {
-                if(BuildConfig.DEBUG)
+            if (active) {
+                if (BuildConfig.DEBUG)
                     UIDialogs.toast(context, "Scheduling background every ${intervalMinutes} minutes");
 
                 val req = PeriodicWorkRequest.Builder(BackgroundWorker::class.java, intervalMinutes.toLong(), TimeUnit.MINUTES, 5, TimeUnit.MINUTES)
-                    .setConstraints(Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.UNMETERED)
-                        .build())
-                    .build();
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()).build();
                 wm.enqueueUniquePeriodicWork("backgroundSubscriptions", ExistingPeriodicWorkPolicy.UPDATE, req);
+            } else {
+                wm.cancelUniqueWork("backgroundSubscriptions");
             }
-            else
-                wm.cancelAllWork();
         } catch (e: Throwable) {
             Logger.e(TAG, "Failed to schedule background subscription updates.", e)
             UIDialogs.toast(context, "Background subscription update failed: " + e.message)
@@ -675,19 +825,34 @@ class StateApp {
     }
 
 
-    private fun migrateStores(context: Context, managedStores: List<ManagedStore<*>>, index: Int) {
+
+    private suspend fun migrateStores(context: Context, managedStores: List<ManagedStore<*>>, index: Int) {
         if(managedStores.size <= index)
             return;
         val store = managedStores[index];
-        if(store.hasMissingReconstructions())
-            UIDialogs.showMigrateDialog(context, store) {
-                migrateStores(context, managedStores, index + 1);
-            };
-        else
+        if(store.hasMissingReconstructions()) {
+            withContext(Dispatchers.Main) {
+                try {
+                    UIDialogs.showMigrateDialog(context, store) {
+                        scopeOrNull?.launch(Dispatchers.IO) {
+                            try {
+                                migrateStores(context, managedStores, index + 1);
+                            } catch (e: Throwable) {
+                                Logger.e(TAG, "Failed to migrate store", e)
+                            }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Logger.e(TAG, "Failed to migrate stores", e)
+                }
+            }
+        } else
             migrateStores(context, managedStores, index + 1);
     }
 
-    fun mainAppDestroyed(context: Context) {
+    fun mainAppDestroyed(context: Context, mainId: String? = null) {
+        if (mainId != null && (_mainId != mainId || _mainId == null))
+            return
         Logger.i(TAG, "App ended");
         _receiverBecomingNoisy?.let {
             _receiverBecomingNoisy = null;
@@ -703,6 +868,7 @@ class StateApp {
 
         StatePlayer.instance.closeMediaSession();
         StateCasting.instance.stop();
+        StateSync.instance.stop();
         StatePlayer.dispose();
         Companion.dispose();
         _fileLogConsumer?.close();
@@ -710,7 +876,8 @@ class StateApp {
 
     fun dispose(){
         _context = null;
-        _scope = null;
+        // _scope = null;
+        Logger.w(TAG, "StateApp disposed: ${Log.getStackTraceString(Throwable())}")
     }
 
     private val _connectivityEvents = object : ConnectivityManager.NetworkCallback() {
@@ -756,15 +923,6 @@ class StateApp {
             try {
                 if(FragmentedStorage.isInitialized && Settings.instance.downloads.shouldDownload())
                     StateDownloads.instance.checkForDownloadsTodos();
-
-                val autoUpdateEnabled = Settings.instance.autoUpdate.isAutoUpdateEnabled();
-                val shouldDownload = Settings.instance.autoUpdate.shouldDownload();
-                val backgroundDownload = Settings.instance.autoUpdate.backgroundDownload == 1;
-                if (autoUpdateEnabled && shouldDownload && backgroundDownload) {
-                    StateUpdate.instance.setShouldBackgroundUpdate(true);
-                } else {
-                    StateUpdate.instance.setShouldBackgroundUpdate(false);
-                }
             } catch(ex: Throwable) {
                 Logger.w(TAG, "Failed to handle capabilities changed event", ex);
             }
@@ -776,8 +934,11 @@ class StateApp {
                 val beforeMeteredState = _lastMeteredState;
                 _lastNetworkState = getCurrentNetworkState();
                 _lastMeteredState = isCurrentMetered();
-                if(beforeNetworkState != _lastNetworkState || beforeMeteredState != _lastMeteredState)
+                if(beforeNetworkState != _lastNetworkState || beforeMeteredState != _lastMeteredState) {
                     Logger.i(TAG, "Network capabilities changed (State: ${_lastNetworkState}, Metered: ${_lastMeteredState})");
+                    _lastConnectivityChange = OffsetDateTime.now();
+                }
+
             } catch(ex: Throwable) {
                 Logger.w(TAG, "Failed to update network state", ex);
             }

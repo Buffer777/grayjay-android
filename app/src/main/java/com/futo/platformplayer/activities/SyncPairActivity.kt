@@ -83,6 +83,7 @@ class SyncPairActivity : AppCompatActivity() {
 
         _layoutPairingSuccess.setOnClickListener {
             _layoutPairingSuccess.visibility = View.GONE
+            finish()
         }
         _layoutPairingError.setOnClickListener {
             _layoutPairingError.visibility = View.GONE
@@ -109,11 +110,29 @@ class SyncPairActivity : AppCompatActivity() {
 
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    StateSync.instance.connect(deviceInfo) { session, complete, message ->
+                    var wasCompleted = false
+
+                    StateSync.instance.syncService?.connect(deviceInfo, true) { complete, message ->
+                        if (wasCompleted) {
+                            Logger.i(TAG, "onStatusUpdate(complete = ${complete}, message = '${message} ignored because wasCompleted')")
+                            return@connect
+                        }
+
+                        if (complete == true) {
+                            wasCompleted = true
+                        }
+
+                        Logger.i(TAG, "onStatusUpdate(complete = ${complete}, message = '${message}')")
                         lifecycleScope.launch(Dispatchers.Main) {
-                            if (complete) {
-                                _layoutPairingSuccess.visibility = View.VISIBLE
-                                _layoutPairing.visibility = View.GONE
+                            if (complete != null) {
+                                if (complete) {
+                                    _layoutPairingSuccess.visibility = View.VISIBLE
+                                    _layoutPairing.visibility = View.GONE
+                                } else {
+                                    _textError.text = message
+                                    _layoutPairingError.visibility = View.VISIBLE
+                                    _layoutPairing.visibility = View.GONE
+                                }
                             } else {
                                 _textPairingStatus.text = message
                             }
@@ -137,8 +156,6 @@ class SyncPairActivity : AppCompatActivity() {
             _textError.text = e.message
             _layoutPairing.visibility = View.GONE
             Logger.e(TAG, "Failed to pair", e)
-        } finally {
-            _layoutPairing.visibility = View.GONE
         }
     }
 

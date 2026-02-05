@@ -5,7 +5,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:fitsSystemWindows="false"
     android:background="@drawable/bottom_menu_border"
     android:id="@+id/videodetail_root"
     android:clickable="true">
@@ -33,7 +32,7 @@
         <com.futo.platformplayer.views.casting.CastView
             android:id="@+id/videodetail_cast"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="300dp"
             android:background="@color/transparent"
             android:visibility="gone"
             android:elevation="4dp"
@@ -575,6 +574,12 @@
 
         <com.futo.platformplayer.views.overlays.RepliesOverlay
             android:id="@+id/videodetail_container_replies"
+            android:visibility="gone"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.futo.platformplayer.views.overlays.ChaptersOverlay
+            android:id="@+id/videodetail_container_chapters"
             android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />

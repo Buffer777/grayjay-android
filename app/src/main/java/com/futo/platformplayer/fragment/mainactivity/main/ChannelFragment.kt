@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
 import com.futo.platformplayer.R
+import com.futo.platformplayer.Settings
 import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.UISlideOverlays
 import com.futo.platformplayer.api.media.PlatformID
@@ -42,12 +43,12 @@ import com.futo.platformplayer.images.GlideHelper.Companion.crossfade
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.SearchType
 import com.futo.platformplayer.models.Subscription
-import com.futo.platformplayer.polycentric.PolycentricCache
 import com.futo.platformplayer.selectBestImage
 import com.futo.platformplayer.selectHighestResolutionImage
 import com.futo.platformplayer.states.StatePlatform
 import com.futo.platformplayer.states.StatePlayer
 import com.futo.platformplayer.states.StatePlaylists
+import com.futo.platformplayer.states.StatePolycentric
 import com.futo.platformplayer.states.StateSubscriptions
 import com.futo.platformplayer.toHumanNumber
 import com.futo.platformplayer.views.adapters.ChannelTab
@@ -55,29 +56,15 @@ import com.futo.platformplayer.views.adapters.ChannelViewPagerAdapter
 import com.futo.platformplayer.views.others.CreatorThumbnail
 import com.futo.platformplayer.views.overlays.slideup.SlideUpMenuOverlay
 import com.futo.platformplayer.views.subscriptions.SubscribeButton
-import com.futo.polycentric.core.OwnedClaim
-import com.futo.polycentric.core.PublicKey
-import com.futo.polycentric.core.Store
-import com.futo.polycentric.core.SystemState
-import com.futo.polycentric.core.systemToURLInfoSystemLinkUrl
+import com.futo.platformplayer.withTimestamp
+import com.futo.polycentric.core.ApiMethods
+import com.futo.polycentric.core.PolycentricProfile
 import com.futo.polycentric.core.toURLInfoSystemLinkUrl
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-
-@Serializable
-data class PolycentricProfile(
-    val system: PublicKey, val systemState: SystemState, val ownedClaims: List<OwnedClaim>
-) {
-    fun getHarborUrl(context: Context): String{
-        val systemState = SystemState.fromStorageTypeSystemState(Store.instance.getSystemState(system));
-        val url = system.systemToURLInfoSystemLinkUrl(systemState.servers.asIterable());
-        return "https://harbor.social/" + url.substring("polycentric://".length);
-    }
-}
 
 class ChannelFragment : MainFragment() {
     override val isMainView: Boolean = true
@@ -144,15 +131,16 @@ class ChannelFragment : MainFragment() {
 
         private val _onPageChangeCallback = object : ViewPager2.OnPageChangeCallback() {}
 
-        private val _taskLoadPolycentricProfile: TaskHandler<PlatformID, PolycentricCache.CachedPolycentricProfile?>
+        private val _taskLoadPolycentricProfile: TaskHandler<PlatformID, PolycentricProfile?>
         private val _taskGetChannel: TaskHandler<String, IPlatformChannel>
 
         init {
             inflater.inflate(R.layout.fragment_channel, this)
-            _taskLoadPolycentricProfile =
-                TaskHandler<PlatformID, PolycentricCache.CachedPolycentricProfile?>({ fragment.lifecycleScope },
+            _taskLoadPolycentricProfile = TaskHandler<PlatformID, PolycentricProfile?>({ fragment.lifecycleScope },
                     { id ->
-                        return@TaskHandler PolycentricCache.instance.getProfileAsync(id)
+                        if (!StatePolycentric.instance.enabled)
+                            return@TaskHandler null
+                        return@TaskHandler ApiMethods.getPolycentricProfileByClaim(ApiMethods.SERVER, ApiMethods.FUTO_TRUST_ROOT, id.claimFieldType.toLong(), id.claimType.toLong(), id.value!!)
                     }).success { setPolycentricProfile(it, animate = true) }.exception<Throwable> {
                     Logger.w(TAG, "Failed to load polycentric profile.", it)
                 }
@@ -186,7 +174,7 @@ class ChannelFragment : MainFragment() {
             _buttonSubscribe = findViewById(R.id.button_subscribe)
             _buttonSubscriptionSettings = findViewById(R.id.button_sub_settings)
             _overlayLoading = findViewById(R.id.channel_loading_overlay)
-            _overlayLoadingSpinner = findViewById(R.id.channel_loader)
+            _overlayLoadingSpinner = findViewById(R.id.channel_loader_frag)
             _overlayContainer = findViewById(R.id.overlay_container)
             _buttonSubscribe.onSubscribed.subscribe {
                 UISlideOverlays.showSubscriptionOptionsOverlay(it, _overlayContainer)
@@ -212,8 +200,12 @@ class ChannelFragment : MainFragment() {
             adapter.onContentClicked.subscribe { v, _ ->
                 when (v) {
                     is IPlatformVideo -> {
-                        StatePlayer.instance.clearQueue()
-                        fragment.navigate<VideoDetailFragment>(v).maximizeVideoDetail()
+                        //StatePlayer.instance.clearQueue()
+                        if (StatePlayer.instance.hasQueue) {
+                            StatePlayer.instance.insertToQueue(v, true);
+                        } else {
+                            fragment.navigate<VideoDetailFragment>(v).maximizeVideoDetail();
+                        }
                     }
 
                     is IPlatformPlaylist -> {
@@ -222,6 +214,14 @@ class ChannelFragment : MainFragment() {
 
                     is IPlatformPost -> {
                         fragment.navigate<PostDetailFragment>(v)
+                    }
+                }
+            }
+            adapter.onShortClicked.subscribe { v, _, pagerPair ->
+                when (v) {
+                    is IPlatformVideo -> {
+                        StatePlayer.instance.clearQueue()
+                        fragment.navigate<ShortsFragment>(Triple(v, pagerPair!!.first, pagerPair.second))
                     }
                 }
             }
@@ -238,8 +238,10 @@ class ChannelFragment : MainFragment() {
             }
             adapter.onAddToWatchLaterClicked.subscribe { content ->
                 if (content is IPlatformVideo) {
-                    StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(content), true)
-                    UIDialogs.toast("Added to watch later\n[${content.name}]")
+                    if(StatePlaylists.instance.addToWatchLater(SerializedPlatformVideo.fromVideo(content), true))
+                        UIDialogs.toast("Added to watch later\n[${content.name}]")
+                    else
+                        UIDialogs.toast(context.getString(R.string.already_in_watch_later))
                 }
             }
             adapter.onUrlClicked.subscribe { url ->
@@ -248,7 +250,7 @@ class ChannelFragment : MainFragment() {
             adapter.onContentUrlClicked.subscribe { url, contentType ->
                 when (contentType) {
                     ContentType.MEDIA -> {
-                        StatePlayer.instance.clearQueue()
+                        StatePlayer.instance.clearQueue();
                         fragment.navigate<VideoDetailFragment>(url).maximizeVideoDetail()
                     }
 
@@ -328,7 +330,7 @@ class ChannelFragment : MainFragment() {
                             _creatorThumbnail.setThumbnail(parameter.thumbnail, true)
                             Glide.with(_imageBanner).clear(_imageBanner)
 
-                            loadPolycentricProfile(parameter.id, parameter.url)
+                            loadPolycentricProfile(parameter.id)
                         }
 
                         _url = parameter.url
@@ -342,7 +344,7 @@ class ChannelFragment : MainFragment() {
                             _creatorThumbnail.setThumbnail(parameter.channel.thumbnail, true)
                             Glide.with(_imageBanner).clear(_imageBanner)
 
-                            loadPolycentricProfile(parameter.channel.id, parameter.channel.url)
+                            loadPolycentricProfile(parameter.channel.id)
                         }
 
                         _url = parameter.channel.url
@@ -359,16 +361,8 @@ class ChannelFragment : MainFragment() {
             _tabs.selectTab(_tabs.getTabAt(selectedTabIndex))
         }
 
-        private fun loadPolycentricProfile(id: PlatformID, url: String) {
-            val cachedPolycentricProfile = PolycentricCache.instance.getCachedProfile(url, true)
-            if (cachedPolycentricProfile != null) {
-                setPolycentricProfile(cachedPolycentricProfile, animate = true)
-                if (cachedPolycentricProfile.expired) {
-                    _taskLoadPolycentricProfile.run(id)
-                }
-            } else {
-                _taskLoadPolycentricProfile.run(id)
-            }
+        private fun loadPolycentricProfile(id: PlatformID) {
+            _taskLoadPolycentricProfile.run(id)
         }
 
         private fun setLoading(isLoading: Boolean) {
@@ -415,7 +409,7 @@ class ChannelFragment : MainFragment() {
             _fragment.topBar?.onShown(channel)
 
             val buttons = arrayListOf(Pair(R.drawable.ic_playlist_add) {
-                UIDialogs.showConfirmationDialog(context,
+                val dialog = UIDialogs.showConfirmationDialog(context,
                     context.getString(R.string.do_you_want_to_convert_channel_channelname_to_a_playlist)
                         .replace("{channelName}", channel.name),
                     {
@@ -447,17 +441,15 @@ class ChannelFragment : MainFragment() {
             _fragment.lifecycleScope.launch(Dispatchers.IO) {
                 val plugin = StatePlatform.instance.getChannelClientOrNull(channel.url)
                 withContext(Dispatchers.Main) {
-                    if (plugin != null && plugin.capabilities.hasSearchChannelContents) {
-                        buttons.add(Pair(R.drawable.ic_search) {
-                            _fragment.navigate<SuggestionsFragment>(
-                                SuggestionsFragmentData(
-                                    "", SearchType.VIDEO, channel.url
-                                )
+                    buttons.add(Pair(R.drawable.ic_search) {
+                        _fragment.navigate<SuggestionsFragment>(
+                            SuggestionsFragmentData(
+                                "", SearchType.VIDEO
                             )
-                        })
+                        )
+                    })
+                    _fragment.topBar?.assume<NavigationTopBarFragment>()?.setMenuItems(buttons)
 
-                        _fragment.topBar?.assume<NavigationTopBarFragment>()?.setMenuItems(buttons)
-                    }
                     if(plugin != null && plugin.capabilities.hasGetChannelCapabilities) {
                         if(plugin.getChannelCapabilities()?.types?.contains(ResultCapabilities.TYPE_SHORTS) ?: false &&
                             !(_viewPager.adapter as ChannelViewPagerAdapter).containsItem(ChannelTab.SHORTS.ordinal.toLong())) {
@@ -533,20 +525,13 @@ class ChannelFragment : MainFragment() {
 
         private fun setPolycentricProfileOr(url: String, or: () -> Unit) {
             setPolycentricProfile(null, animate = false)
-
-            val cachedProfile = channel?.let { PolycentricCache.instance.getCachedProfile(url) }
-            if (cachedProfile != null) {
-                setPolycentricProfile(cachedProfile, animate = false)
-            } else {
-                or()
-            }
+            or()
         }
 
         private fun setPolycentricProfile(
-            cachedPolycentricProfile: PolycentricCache.CachedPolycentricProfile?, animate: Boolean
+            profile: PolycentricProfile?, animate: Boolean
         ) {
             val dp35 = 35.dp(resources)
-            val profile = cachedPolycentricProfile?.profile
             val avatar = profile?.systemState?.avatar?.selectBestImage(dp35 * dp35)?.let {
                 it.toURLInfoSystemLinkUrl(
                     profile.system.toProto(), it.process, profile.systemState.servers.toList()

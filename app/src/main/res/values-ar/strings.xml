@@ -388,6 +388,7 @@
     <string name="unhandled_exception_in_vs">استثناء غير معالج في VS</string>
     <string name="send_exception_to_developers">إرسال الاستثناء للمطورين…</string>
     <string name="your_license_key_has_been_set_an_app_restart_might_be_required">تم تعيين مفتاح الترخيص الخاص بك!\nقد يكون هناك حاجة لإعادة تشغيل التطبيق.</string>
+    <string name="qr_code_too_large_use_text_below">رمز الاستجابة السريعة كبير جدًا. استخدم النص أدناه لمشاركة ملفك الشخصي.</string>
     <string name="invalid_license_format">تنسيق الترخيص غير صالح</string>
     <string name="unknown_content_format">تنسيق المحتوى غير معروف</string>
     <string name="unknown_file_format">تنسيق الملف غير معروف</string>
@@ -703,5 +704,20 @@
     <string-array name="comments_sortby_array">
         <item>Newest</item>
         <item>Oldest</item>
+    </string-array>
+    <string-array name="app_languages">
+        <item>النظام</item>
+        <item>الإنجليزية (EN)</item>
+        <item>الألمانية (DE)</item>
+        <item>الإسبانية (ES)</item>
+        <item>البرتغالية (PT)</item>
+        <item>الفرنسية (FR)</item>
+        <item>اليابانية (JA)</item>
+        <item>الكورية (KO)</item>
+        <item>الصينية (ZH)</item>
+        <item>الروسية (RU)</item>
+        <item>العربية (AR)</item>
+        <item>الإيطالية (IT)</item>
+        <item>التركية (TR)</item>
     </string-array>
 </resources>

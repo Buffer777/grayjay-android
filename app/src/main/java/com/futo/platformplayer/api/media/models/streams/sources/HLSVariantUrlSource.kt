@@ -14,6 +14,9 @@ class HLSVariantVideoUrlSource(
     override val priority: Boolean,
     val url: String
 ) : IVideoUrlSource {
+    override val language: String? = null;
+    override val original: Boolean? = false;
+
     override fun getVideoUrl(): String {
         return url
     }
@@ -27,6 +30,7 @@ class HLSVariantAudioUrlSource(
     override val language: String,
     override val duration: Long?,
     override val priority: Boolean,
+    override val original: Boolean,
     val url: String
 ) : IAudioUrlSource {
     override fun getAudioUrl(): String {
@@ -40,6 +44,7 @@ class HLSVariantSubtitleUrlSource(
     override val format: String,
 ) : ISubtitleSource {
     override val hasFetch: Boolean = false
+    override val language: String? = null
 
     override fun getSubtitles(): String? {
         return null

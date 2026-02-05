@@ -2,6 +2,7 @@ package com.futo.platformplayer.states
 
 import android.content.Context
 import com.futo.platformplayer.R
+import com.futo.platformplayer.Settings
 import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.activities.LoginActivity
 import com.futo.platformplayer.api.http.ManagedHttpClient
@@ -10,6 +11,7 @@ import com.futo.platformplayer.api.media.platforms.js.SourceAuth
 import com.futo.platformplayer.api.media.platforms.js.SourceCaptchaData
 import com.futo.platformplayer.api.media.platforms.js.SourcePluginConfig
 import com.futo.platformplayer.api.media.platforms.js.SourcePluginDescriptor
+import com.futo.platformplayer.fragment.mainactivity.main.LoginFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SourceDetailFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SourceDetailFragment.Companion
 import com.futo.platformplayer.logging.Logger
@@ -101,6 +103,8 @@ class StatePlugins {
             if (availableClient !is JSClient) {
                 continue
             }
+            if(!Settings.instance.plugins.checkDisabledPluginsForUpdates && !StatePlatform.instance.isClientEnabled(availableClient.id))
+                continue;
 
             val newConfig = checkForUpdates(availableClient.config);
             if (newConfig != null) {
@@ -112,7 +116,7 @@ class StatePlugins {
         _updatesAvailableMap = updatesAvailableFor
         return@withContext configs;
     }
-    private suspend fun checkForUpdates(c: SourcePluginConfig): SourcePluginConfig? = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(c: SourcePluginConfig): SourcePluginConfig? = withContext(Dispatchers.IO) {
         val sourceUrl = c.sourceUrl ?: return@withContext null;
 
         Logger.i(TAG, "Check for source updates '${c.name}'.");
@@ -164,7 +168,10 @@ class StatePlugins {
         if(config.authentication == null)
             return false;
 
-        LoginActivity.showLogin(context, config) {
+        LoginFragment.showLogin(config) {//LoginActivity.showLogin(context, config) {
+
+            if(it == null)
+                return@showLogin;
             try {
                 StatePlugins.instance.setPluginAuth(config.id, it);
             } catch (e: Throwable) {
@@ -176,8 +183,9 @@ class StatePlugins {
             }
 
             StateApp.instance.scope.launch(Dispatchers.IO) {
-                StatePlatform.instance.reloadClient(context, id);
-                afterLogin.invoke();
+                StatePlatform.instance.reloadClient(context, id) {
+                    afterLogin.invoke();
+                }
             }
         };
         return true;
@@ -296,6 +304,7 @@ class StatePlugins {
                 StateAssets.readAssetBinRelative(context, assetConfigPath, config.iconUrl);
             else null;
 
+            //config.version = config.version - 1;
             createPlugin(config, script, icon, true);
             return true;
         }
@@ -313,6 +322,15 @@ class StatePlugins {
            installPlugins(context, scope, sourceUrls.drop(1), handler);
         }
     }
+    fun requestConfig(sourceUrl: String): SourcePluginConfig {
+        val configResp = ManagedHttpClient().get(sourceUrl);
+        if(!configResp.isOk)
+            throw IllegalStateException("Failed request with ${configResp.code}");
+        val configJson = configResp.body?.string();
+        if(configJson.isNullOrEmpty())
+            throw IllegalStateException("No response");
+        return SourcePluginConfig.fromJson(configJson, sourceUrl);
+    }
     fun installPlugin(context: Context, scope: CoroutineScope, sourceUrl: String, handler: ((Boolean) -> Unit)? = null) {
         scope.launch(Dispatchers.IO) {
             val client = ManagedHttpClient();
@@ -325,6 +343,7 @@ class StatePlugins {
                 if(configJson.isNullOrEmpty())
                     throw IllegalStateException("No response");
                 config = SourcePluginConfig.fromJson(configJson, sourceUrl);
+                //config.version = config.version - 1;
             }
             catch(ex: SerializationException) {
                 Logger.e(TAG, "Failed decode config", ex);
@@ -398,18 +417,25 @@ class StatePlugins {
                         }
 
                         val icon = config.absoluteIconUrl?.let { absIconUrl ->
-                            withContext(Dispatchers.Main) {
-                                it.setText("Saving plugin...");
-                                it.setProgress(0.75);
-                            }
                             val iconResp = client.get(absIconUrl);
                             if(iconResp.isOk)
                                 return@let iconResp.body?.byteStream()?.use { it.readBytes() };
                             return@let null;
                         }
+
+                        withContext(Dispatchers.Main) {
+                            it.setText("Saving plugin...");
+                            it.setProgress(0.75);
+                        }
+
                         val installEx = StatePlugins.instance.createPlugin(config, script, icon, reinstall);
                         if(installEx != null)
                             throw installEx;
+
+                        withContext(Dispatchers.Main) {
+                            it.setText("Reloading available plugins...");
+                            it.setProgress(0.9);
+                        }
                         StatePlatform.instance.updateAvailableClients(context);
 
                         withContext(Dispatchers.Main) {
@@ -472,6 +498,7 @@ class StatePlugins {
                 delay(500);
 
                 val client = ManagedHttpClient();
+                client.setTimeout(10000);
                 try {
                     withContext(Dispatchers.Main) {
                         onProgress.invoke("Validating script", 0.25);
@@ -486,13 +513,13 @@ class StatePlugins {
                     }
 
                     val icon = config.absoluteIconUrl?.let { absIconUrl ->
-                        withContext(Dispatchers.Main) {
-                            onProgress.invoke("Saving plugin", 0.75);
-                        }
                         val iconResp = client.get(absIconUrl);
                         if (iconResp.isOk)
                             return@let iconResp.body?.byteStream()?.use { it.readBytes() };
                         return@let null;
+                    }
+                    withContext(Dispatchers.Main) {
+                        onProgress.invoke("Saving plugin", 0.75);
                     }
                     val installEx = StatePlugins.instance.createPlugin(config, script, icon, true);
                     if (installEx != null)
@@ -517,9 +544,7 @@ class StatePlugins {
         if(id == StateDeveloper.DEV_ID)
             throw IllegalStateException("Attempted to retrieve a persistent developer plugin, this is not allowed");
 
-        synchronized(_plugins) {
-            return _plugins.findItem { it.config.id == id };
-        }
+        return _plugins.findItem { it.config.id == id };
     }
     fun getPlugins(): List<SourcePluginDescriptor> {
         return _plugins.getItems();
@@ -528,12 +553,10 @@ class StatePlugins {
 
     fun deletePlugin(id: String) {
         synchronized(_pluginScripts) {
-            synchronized(_plugins) {
-                _pluginScripts.deleteFile(id);
-                val plugins = _plugins.findItems { it.config.id == id };
-                for(plugin in plugins)
-                    _plugins.delete(plugin);
-            }
+            _pluginScripts.deleteFile(id);
+            val plugins = _plugins.findItems { it.config.id == id };
+            for(plugin in plugins)
+                _plugins.delete(plugin);
         }
     }
     fun createPlugin(config: SourcePluginConfig, script: String, icon: ByteArray? = null, reinstall: Boolean = false, flags: List<String> = listOf()) : Throwable? {
@@ -634,6 +657,9 @@ class StatePlugins {
         val descriptor = getPlugin(id) ?: throw IllegalArgumentException("Plugin [${id}] does not exist");
         descriptor.updateAuth(auth);
         _plugins.save(descriptor);
+
+        if(auth != null)
+            UIDialogs.appToast("Plugin ${descriptor?.config?.name} logged in");
     }
 
     @Serializable

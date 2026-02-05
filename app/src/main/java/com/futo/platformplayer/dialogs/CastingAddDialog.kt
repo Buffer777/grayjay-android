@@ -8,11 +8,13 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.*
 import com.futo.platformplayer.R
+import com.futo.platformplayer.Settings
 import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.casting.CastProtocolType
 import com.futo.platformplayer.casting.StateCasting
 import com.futo.platformplayer.models.CastingDeviceInfo
 import com.futo.platformplayer.toInetAddress
+import com.futo.platformplayer.logging.Logger
 
 
 class CastingAddDialog(context: Context?) : AlertDialog(context) {
@@ -101,12 +103,16 @@ class CastingAddDialog(context: Context?) : AlertDialog(context) {
 
             _textError.visibility = View.GONE;
             val castingDeviceInfo = CastingDeviceInfo(name, castProtocolType, arrayOf(ip), port.toInt());
-            StateCasting.instance.addRememberedDevice(castingDeviceInfo);
+            try {
+                StateCasting.instance.addRememberedDevice(castingDeviceInfo)
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Failed to add remembered device: $e")
+            }
             performDismiss();
         };
 
         _buttonTutorial.setOnClickListener {
-            UIDialogs.showCastingTutorialDialog(context)
+            UIDialogs.showCastingTutorialDialog(context, ownerActivity)
             dismiss()
         }
     }
@@ -130,7 +136,7 @@ class CastingAddDialog(context: Context?) : AlertDialog(context) {
 
     private fun performDismiss(shouldShowCastingDialog: Boolean = true) {
         if (shouldShowCastingDialog) {
-            UIDialogs.showCastingDialog(context);
+            UIDialogs.showCastingDialog(context, ownerActivity);
         }
 
         dismiss();

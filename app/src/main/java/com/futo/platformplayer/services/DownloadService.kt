@@ -15,6 +15,7 @@ import com.futo.platformplayer.Settings
 import com.futo.platformplayer.activities.MainActivity
 import com.futo.platformplayer.api.http.ManagedHttpClient
 import com.futo.platformplayer.downloads.VideoDownload
+import com.futo.platformplayer.engine.exceptions.ScriptReloadRequiredException
 import com.futo.platformplayer.exceptions.DownloadException
 import com.futo.platformplayer.getNowDiffMinutes
 import com.futo.platformplayer.logging.Logger
@@ -48,6 +49,7 @@ class DownloadService : Service() {
     private val _scope: CoroutineScope = CoroutineScope(Dispatchers.Default);
     private var _notificationManager: NotificationManager? = null;
     private var _notificationChannel: NotificationChannel? = null;
+    private var _isForeground = false
 
     private val _client = ManagedHttpClient(OkHttpClient.Builder()
         //.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(InetAddress.getByName("192.168.1.175"), 8081)))
@@ -62,12 +64,12 @@ class DownloadService : Service() {
         Logger.i(TAG, "onStartCommand");
         synchronized(this) {
             if(_started)
-                return START_STICKY;
+                return START_NOT_STICKY;
 
             if(!FragmentedStorage.isInitialized) {
-                Logger.i(TAG, "Attempted to start DownloadService without initialized files");
-                closeDownloadSession();
-                return START_NOT_STICKY;
+                Logger.i(TAG, "Attempted to start DownloadService without initialized files")
+                closeDownloadSession()
+                return START_NOT_STICKY
             }
             _started = true;
         }
@@ -105,17 +107,40 @@ class DownloadService : Service() {
         return START_STICKY;
     }
     fun setupNotificationRequirements() {
-        _notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager;
-        _notificationChannel = NotificationChannel(DOWNLOAD_NOTIF_CHANNEL_ID, DOWNLOAD_NOTIF_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT).apply {
-            this.enableVibration(false);
-            this.setSound(null, null);
-        };
-        _notificationManager!!.createNotificationChannel(_notificationChannel!!);
+        _notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (_notificationChannel == null) {
+            _notificationChannel = NotificationChannel(
+                DOWNLOAD_NOTIF_CHANNEL_ID,
+                DOWNLOAD_NOTIF_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                enableVibration(false)
+                setSound(null, null)
+                setShowBadge(false)
+            }
+        }
+        _notificationManager?.createNotificationChannel(_notificationChannel!!)
     }
 
     override fun onCreate() {
         Logger.i(TAG, "onCreate");
         super.onCreate()
+
+        setupNotificationRequirements()
+
+        val bootstrapNotif = NotificationCompat.Builder(this, DOWNLOAD_NOTIF_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_download)
+            .setContentTitle("Preparing downloads...")
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            startForeground(DOWNLOAD_NOTIF_ID, bootstrapNotif, FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        else
+            startForeground(DOWNLOAD_NOTIF_ID, bootstrapNotif)
+
+        _isForeground = true
     }
 
     override fun onBind(p0: Intent?): IBinder? {
@@ -145,6 +170,7 @@ class DownloadService : Service() {
                 Thread.sleep(500);
             }
             catch(ex: Throwable) {
+                //if(ex is ScriptReloadRequiredException)
                 Logger.e(TAG, "Download failed", ex);
                 if(currentVideo.video == null && currentVideo.videoDetails == null) {
                     //Corrupt?
@@ -246,15 +272,14 @@ class DownloadService : Service() {
     }
 
     private fun notifyDownload(download: VideoDownload?) {
-        val channel = _notificationChannel ?: return;
-
+        val channelId = DOWNLOAD_NOTIF_CHANNEL_ID
         val bringUpIntent = Intent(this, MainActivity::class.java);
         bringUpIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         bringUpIntent.action = "TAB";
         bringUpIntent.putExtra("TAB", "Downloads");
 
-        var builder = if(download != null)
-            NotificationCompat.Builder(this, DOWNLOAD_NOTIF_TAG)
+        val builder = if(download != null)
+            NotificationCompat.Builder(this, channelId)
                 .setSmallIcon(R.drawable.ic_download)
                 .setOngoing(true)
                 .setSilent(true)
@@ -262,35 +287,42 @@ class DownloadService : Service() {
                 .setContentTitle("${download.state}: ${download.name}")
                 .setContentText(download.getDownloadInfo())
                 .setProgress(100, (download.progress * 100).toInt(), download.progress == 0.0)
-                .setChannelId(channel.id)
+                .setChannelId(channelId)
         else
-            NotificationCompat.Builder(this, DOWNLOAD_NOTIF_TAG)
+            NotificationCompat.Builder(this, channelId)
                 .setSmallIcon(R.drawable.ic_download)
                 .setOngoing(true)
                 .setSilent(true)
                 .setContentIntent(PendingIntent.getActivity(this, 5, bringUpIntent, PendingIntent.FLAG_IMMUTABLE))
                 .setContentTitle("Preparing for download...")
                 .setContentText("Initializing download process...")
-                .setChannelId(channel.id)
+                .setChannelId(channelId)
 
         val notif = builder.build();
         notif.flags = notif.flags or NotificationCompat.FLAG_ONGOING_EVENT or NotificationCompat.FLAG_NO_CLEAR;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(DOWNLOAD_NOTIF_ID, notif, FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        if (_isForeground) {
+            _notificationManager?.notify(DOWNLOAD_NOTIF_ID, notif)
         } else {
-            startForeground(DOWNLOAD_NOTIF_ID, notif);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                startForeground(DOWNLOAD_NOTIF_ID, notif, FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            else
+                startForeground(DOWNLOAD_NOTIF_ID, notif)
+            _isForeground = true
         }
     }
 
     fun closeDownloadSession() {
-        Logger.i(TAG, "closeDownloadSession");
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        _notificationManager?.cancel(DOWNLOAD_NOTIF_ID);
-        stopService();
-        _started = false;
-        super.stopSelf();
+        Logger.i(TAG, "closeDownloadSession")
+        if (_isForeground) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            _isForeground = false
+        }
+        _notificationManager?.cancel(DOWNLOAD_NOTIF_ID)
+        _started = false
+        super.stopSelf()
     }
+
     override fun onDestroy() {
         Logger.i(TAG, "onDestroy");
         _instance = null;

@@ -4,6 +4,7 @@ import android.net.Uri
 import com.futo.platformplayer.SignatureProvider
 import com.futo.platformplayer.api.media.Serializer
 import com.futo.platformplayer.engine.IV8PluginConfig
+import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.matchesDomain
 import com.futo.platformplayer.states.StatePlugins
 import kotlinx.serialization.Contextual
@@ -22,7 +23,7 @@ class SourcePluginConfig(
     //Script
     val repositoryUrl: String? = null,
     val scriptUrl: String = "",
-    val version: Int = -1,
+    var version: Int = -1,
 
     val iconUrl: String? = null,
     var id: String = UUID.randomUUID().toString(),
@@ -47,6 +48,7 @@ class SourcePluginConfig(
     var subscriptionRateLimit: Int? = null,
     var enableInSearch: Boolean = true,
     var enableInHome: Boolean = true,
+    var enableInShorts: Boolean = true,
     var supportedClaimTypes: List<Int> = listOf(),
     var primaryClaimFieldType: Int? = null,
     var developerSubmitUrl: String? = null,
@@ -58,6 +60,11 @@ class SourcePluginConfig(
 
     val absoluteIconUrl: String? get() = resolveAbsoluteUrl(iconUrl, sourceUrl);
     val absoluteScriptUrl: String get() = resolveAbsoluteUrl(scriptUrl, sourceUrl)!!;
+
+    fun isOfficialAuthor(): Boolean {
+        return scriptSignature != null &&
+            scriptPublicKey == "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsoFJU4AReDyUnSQI9A99UjLCwkY8OH+1o8cdtf2EjSb+fO2qmP8MGMTAvfvgmq5d2QBJE2XHRkRO3JKcTlcc1j0WlOlU8P9W272DYCeX6oYaavpKNqGKoGEuodp9wtiyNwyH46++JfpU/uIUacZbZKkHv9gIGchmNvpKYZQjFd/8pUqXGpcXZP54tGSC9PLcY+5TozZThK7Oy1+3YEf1bZ44UinRYYATbLk/wNuAfsupvlt6nxZOcJhABhdo9V+gY0FE6Ayg5+1cd1noWhnRtLF+sPdEr3z8Nt15JEK5a/524t25FMhwz8yKxlGW5qW3QLJHSUgLQncL6a1zlZ1s8QIDAQAB"
+    }
 
     private fun resolveAbsoluteUrl(url: String?, sourceUrl: String?): String? {
         if(url == null)
@@ -163,17 +170,28 @@ class SourcePluginConfig(
                 "Unrestricted Http Header access",
                 "Allows this plugin to access all headers (including cookies and authorization headers) for unauthenticated requests."
             ))
+        if(packagesOptional.contains("Browser") || packages.contains("Browser")) {
+            list.add(Pair(
+                "Browser Interop",
+                "This plugin requires webbrowser interop. May access urls outside of the restricted urls. This will only work for official plugins and during development builds."
+            ))
+        }
 
         return list;
     }
 
     fun validate(text: String): Boolean {
-        if(scriptPublicKey.isNullOrEmpty())
-            throw IllegalStateException("No public key present");
-        if(scriptSignature.isNullOrEmpty())
-            throw IllegalStateException("No signature present");
+        try {
+            if (scriptPublicKey.isNullOrEmpty())
+                throw IllegalStateException("No public key present");
+            if (scriptSignature.isNullOrEmpty())
+                throw IllegalStateException("No signature present");
 
-        return SignatureProvider.verify(text, scriptSignature, scriptPublicKey);
+            return SignatureProvider.verify(text, scriptSignature, scriptPublicKey);
+        } catch (e: Throwable) {
+            Logger.e(TAG, "Failed to verify due to an unhandled exception", e)
+            return false
+        }
     }
 
     fun isUrlAllowed(url: String): Boolean {
@@ -204,6 +222,8 @@ class SourcePluginConfig(
                 obj.sourceUrl = sourceUrl;
             return obj;
         }
+
+        private val TAG = "SourcePluginConfig"
     }
 
     @kotlinx.serialization.Serializable
@@ -215,7 +235,8 @@ class SourcePluginConfig(
         val variable: String? = null,
         val dependency: String? = null,
         val warningDialog: String? = null,
-        val options: List<String>? = null
+        val options: List<String>? = null,
+        val isAdvanced: Boolean? = null
     ) {
         val variableOrName: String get() = variable ?: name;
     }

@@ -4,6 +4,8 @@ import com.caoccao.javet.values.reference.V8ValueObject
 import com.futo.platformplayer.api.media.IPlatformClient
 import com.futo.platformplayer.api.media.IPluginSourced
 import com.futo.platformplayer.api.media.models.Thumbnails
+import com.futo.platformplayer.api.media.models.article.IPlatformArticle
+import com.futo.platformplayer.api.media.models.article.IPlatformArticleDetails
 import com.futo.platformplayer.api.media.models.comments.IPlatformComment
 import com.futo.platformplayer.api.media.models.contents.ContentType
 import com.futo.platformplayer.api.media.models.contents.IPlatformContent
@@ -19,38 +21,40 @@ import com.futo.platformplayer.api.media.structures.IPager
 import com.futo.platformplayer.getOrDefault
 import com.futo.platformplayer.getOrThrow
 import com.futo.platformplayer.getOrThrowNullableList
+import com.futo.platformplayer.invokeV8
 import com.futo.platformplayer.states.StateDeveloper
 
-open class JSArticleDetails : JSContent, IPluginSourced, IPlatformContentDetails {
-    final override val contentType: ContentType get() = ContentType.ARTICLE;
+open class JSArticleDetails(
+    private val client: JSClient,
+    obj: V8ValueObject
+) : JSContent(client.config, obj), IPlatformArticleDetails, IPluginSourced, IPlatformContentDetails {
 
-    private val _hasGetComments: Boolean;
-    private val _hasGetContentRecommendations: Boolean;
+    final override val contentType: ContentType = ContentType.ARTICLE
 
-    val rating: IRating;
+    private val _hasGetComments: Boolean = _content.has("getComments")
+    private val _hasGetContentRecommendations: Boolean = _content.has("getContentRecommendations")
 
-    val summary: String;
-    val thumbnails: Thumbnails?;
-    val segments: List<IJSArticleSegment>;
+    override val rating: IRating =
+        obj.getOrDefault<V8ValueObject>(client.config, "rating", "PlatformArticle", null)
+            ?.let { IRating.fromV8(client.config, it, "PlatformArticle") }
+            ?: RatingLikes(0)
 
-    constructor(client: JSClient, obj: V8ValueObject): super(client.config, obj) {
-        val contextName = "PlatformPost";
+    override val summary: String =
+        _content.getOrThrow(client.config, "summary", "PlatformArticle")
 
-        rating = obj.getOrDefault<V8ValueObject>(client.config, "rating", contextName, null)?.let { IRating.fromV8(client.config, it, contextName) } ?: RatingLikes(0);
-        summary = _content.getOrThrow(client.config, "summary", contextName);
-        if(_content.has("thumbnails"))
-            thumbnails = Thumbnails.fromV8(client.config, _content.getOrThrow(client.config, "thumbnails", contextName));
+    override val thumbnails: Thumbnails? =
+        if (_content.has("thumbnails"))
+            Thumbnails.fromV8(
+                client.config,
+                _content.getOrThrow(client.config, "thumbnails", "PlatformArticle")
+            )
         else
-            thumbnails = null;
+            null
 
-
-        segments = (obj.getOrThrowNullableList<V8ValueObject>(client.config, "segments", contextName)
-            ?.map { fromV8Segment(client, it) }
-            ?.filterNotNull() ?: listOf());
-
-        _hasGetComments = _content.has("getComments");
-        _hasGetContentRecommendations = _content.has("getContentRecommendations");
-    }
+    override val segments: List<IJSArticleSegment> =
+        obj.getOrThrowNullableList<V8ValueObject>(client.config, "segments", "PlatformArticle")
+            ?.mapNotNull { fromV8Segment(client, it) }
+            ?: emptyList()
 
     override fun getComments(client: IPlatformClient): IPager<IPlatformComment>? {
         if(!_hasGetComments || _content.isClosed)
@@ -83,12 +87,12 @@ open class JSArticleDetails : JSContent, IPluginSourced, IPlatformContentDetails
     }
 
     private fun getContentRecommendationsJS(client: JSClient): JSContentPager {
-        val contentPager = _content.invoke<V8ValueObject>("getContentRecommendations", arrayOf<Any>());
+        val contentPager = _content.invokeV8<V8ValueObject>("getContentRecommendations", arrayOf<Any>());
         return JSContentPager(_pluginConfig, client, contentPager);
     }
 
     private fun getCommentsJS(client: JSClient): JSCommentPager {
-        val commentPager = _content.invoke<V8ValueObject>("getComments", arrayOf<Any>());
+        val commentPager = _content.invokeV8<V8ValueObject>("getComments", arrayOf<Any>());
         return JSCommentPager(_pluginConfig, client, commentPager);
     }
 
@@ -99,6 +103,7 @@ open class JSArticleDetails : JSContent, IPluginSourced, IPlatformContentDetails
             return when(SegmentType.fromInt(obj.getOrThrow(client.config, "type", "JSArticle.Segment"))) {
                 SegmentType.TEXT -> JSTextSegment(client, obj);
                 SegmentType.IMAGES -> JSImagesSegment(client, obj);
+                SegmentType.HEADER -> JSHeaderSegment(client, obj);
                 SegmentType.NESTED -> JSNestedSegment(client, obj);
                 else -> null;
             }
@@ -110,6 +115,7 @@ enum class SegmentType(val value: Int) {
     UNKNOWN(0),
     TEXT(1),
     IMAGES(2),
+    HEADER(3),
 
     NESTED(9);
 
@@ -148,6 +154,17 @@ class JSImagesSegment: IJSArticleSegment {
         val contextName = "JSTextSegment";
         images = obj.getOrThrowNullableList<String>(client.config, "images", contextName) ?: listOf();
         caption = obj.getOrDefault(client.config, "caption", contextName, "") ?: "";
+    }
+}
+class JSHeaderSegment: IJSArticleSegment {
+    override val type = SegmentType.HEADER;
+    val content: String;
+    val level: Int;
+
+    constructor(client: JSClient, obj: V8ValueObject) {
+        val contextName = "JSHeaderSegment";
+        content = obj.getOrDefault(client.config, "content", contextName, "") ?: "";
+        level = obj.getOrDefault(client.config, "level", contextName, 1) ?: 1;
     }
 }
 class JSNestedSegment: IJSArticleSegment {

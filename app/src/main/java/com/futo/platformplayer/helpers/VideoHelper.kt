@@ -9,6 +9,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
 import androidx.media3.exoplayer.source.MediaSource
+import com.futo.platformplayer.Settings
 import com.futo.platformplayer.api.media.models.streams.IVideoSourceDescriptor
 import com.futo.platformplayer.api.media.models.streams.VideoUnMuxedSourceDescriptor
 import com.futo.platformplayer.api.media.models.streams.sources.IAudioSource
@@ -18,6 +19,8 @@ import com.futo.platformplayer.api.media.models.streams.sources.IHLSManifestSour
 import com.futo.platformplayer.api.media.models.streams.sources.IVideoSource
 import com.futo.platformplayer.api.media.models.streams.sources.IVideoUrlSource
 import com.futo.platformplayer.api.media.models.streams.sources.IWidevineSource
+import com.futo.platformplayer.api.media.models.subtitles.ISubtitleSource
+import com.futo.platformplayer.api.media.models.video.IPlatformVideo
 import com.futo.platformplayer.api.media.models.video.IPlatformVideoDetails
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSAudioUrlRangeSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSDashManifestRawAudioSource
@@ -49,8 +52,8 @@ class VideoHelper {
         fun isDownloadable(source: IVideoSource) = (source is IVideoUrlSource || source is IHLSManifestSource || source is JSDashManifestRawSource) && source !is IWidevineSource
         fun isDownloadable(source: IAudioSource) = (source is IAudioUrlSource || source is IHLSManifestAudioSource || source is JSDashManifestRawAudioSource) && source !is IWidevineSource
 
-        fun selectBestVideoSource(desc: IVideoSourceDescriptor, desiredPixelCount : Int, prefContainers : Array<String>) : IVideoSource? = selectBestVideoSource(desc.videoSources.toList(), desiredPixelCount, prefContainers);
-        fun selectBestVideoSource(sources: Iterable<IVideoSource>, desiredPixelCount : Int, prefContainers : Array<String>) : IVideoSource? {
+        fun selectBestVideoSource(desc: IVideoSourceDescriptor, desiredPixelCount : Int, prefContainers : Array<String>, preferredLanguage: String? = null) : IVideoSource? = selectBestVideoSource(desc.videoSources.toList(), desiredPixelCount, prefContainers, preferredLanguage);
+        fun selectBestVideoSource(sources: Iterable<IVideoSource>, desiredPixelCount : Int, prefContainers : Array<String>, preferredLanguage: String? = null) : IVideoSource? {
             val targetVideo = if(desiredPixelCount > 0) {
                 sources.toList().minByOrNull { x -> abs(x.height * x.width - desiredPixelCount) };
             } else {
@@ -60,10 +63,32 @@ class VideoHelper {
             val hasPriority = sources.any { it.priority };
 
             val targetPixelCount = if(targetVideo != null) targetVideo.width * targetVideo.height else desiredPixelCount;
-            val altSources = if(hasPriority) {
+
+            //Filter priority
+            var altSources = if(hasPriority) {
                 sources.filter { it.priority }.sortedBy { x -> abs(x.height * x.width - targetPixelCount) };
             } else {
                 sources.filter { it.height == (targetVideo?.height ?: 0) };
+            }
+
+            //Filter Original
+            val hasOriginal = altSources.any { it.original == true };
+            if(hasOriginal && Settings.instance.playback.preferOriginalAudio)
+                altSources = altSources.filter { it.original == true };
+
+            //Filter Language
+            val languageToFilter = if(preferredLanguage != null && altSources.any { it.language == preferredLanguage }) {
+                preferredLanguage
+            } else {
+                if(altSources.any { it.language == Language.ENGLISH })
+                    Language.ENGLISH;
+                else
+                    Language.UNKNOWN;
+            }
+            if(altSources.any { it.language == languageToFilter }) {
+                altSources.filter { it.language == languageToFilter }.sortedBy { it.bitrate }.toList();
+            } else {
+                altSources.sortedBy { it.bitrate }
             }
 
             var bestSource = altSources.firstOrNull();
@@ -85,12 +110,17 @@ class VideoHelper {
 
             return selectBestAudioSource((desc as VideoUnMuxedSourceDescriptor).audioSources.toList(), prefContainers, prefLanguage, targetBitrate);
         }
-        fun selectBestAudioSource(altSources : Iterable<IAudioSource>, prefContainers : Array<String>, preferredLanguage: String? = null, targetBitrate: Long? = null) : IAudioSource? {
+        fun selectBestAudioSource(sources : Iterable<IAudioSource>, prefContainers : Array<String>, preferredLanguage: String? = null, targetBitrate: Long? = null) : IAudioSource? {
+            val hasPriority = sources.any { it.priority };
+            var altSources = if(hasPriority) sources.filter { it.priority } else sources;
+            val hasOriginal = altSources.any { it.original };
+            if(hasOriginal && Settings.instance.playback.preferOriginalAudio)
+                altSources = altSources.filter { it.original };
             val languageToFilter = if(preferredLanguage != null && altSources.any { it.language == preferredLanguage }) {
                 preferredLanguage
             } else {
                 if(altSources.any { it.language == Language.ENGLISH })
-                    Language.ENGLISH
+                    Language.ENGLISH;
                 else
                     Language.UNKNOWN;
             }
@@ -126,6 +156,62 @@ class VideoHelper {
                 }
             }
             return bestSource;
+        }
+
+        fun selectBestSubtitleSource(sources: Iterable<ISubtitleSource>, preferredLanguage: String?): ISubtitleSource? {
+            if (preferredLanguage.isNullOrBlank()) return null
+
+            val prefTag = normalizeTag(preferredLanguage)
+            val prefPrimary = primarySubtag(prefTag) ?: return null
+
+            var best: ISubtitleSource? = null
+            var bestKey: Quad<Int, Int, String, String>? = null
+
+            for (src in sources) {
+                val raw = src.language ?: continue
+                val tag = normalizeTag(raw)
+                val primary = primarySubtag(tag) ?: continue
+
+                val score = when {
+                    tag.equals(prefTag, ignoreCase = true) -> 0
+                    primary.equals(prefPrimary, ignoreCase = true) && findRegion(tag) == null -> 1
+                    primary.equals(prefPrimary, ignoreCase = true) -> 2
+                    else -> 3
+                }
+                if (score >= 3) continue
+
+                val key = Quad(score, src.name.length, tag.lowercase(), src.name)
+                if (bestKey == null || key < bestKey!!) {
+                    bestKey = key
+                    best = src
+                }
+            }
+            return best
+        }
+
+        private fun normalizeTag(tag: String): String = tag.trim().replace('_', '-')
+        private fun primarySubtag(tag: String): String? = tag.split('-').firstOrNull { it.isNotBlank() }?.lowercase()
+
+        private fun findRegion(tag: String): String? {
+            val parts = tag.split('-').drop(1) // skip primary language
+            for (p in parts) {
+                val isAlpha2 = p.length == 2 && p[0].isLetter() && p[1].isLetter()
+                val isNumeric3 = p.length == 3 && p.all { it.isDigit() }
+                if (isAlpha2 || isNumeric3) return p.uppercase()
+            }
+            return null
+        }
+
+        private data class Quad<A : Comparable<A>, B : Comparable<B>, C : Comparable<C>, D : Comparable<D>>(
+            val a: A, val b: B, val c: C, val d: D
+        ) : Comparable<Quad<A, B, C, D>> {
+            override fun compareTo(other: Quad<A, B, C, D>): Int =
+                when {
+                    a != other.a -> a.compareTo(other.a)
+                    b != other.b -> b.compareTo(other.b)
+                    c != other.c -> c.compareTo(other.c)
+                    else -> d.compareTo(other.d)
+                }
         }
 
         @OptIn(UnstableApi::class)
@@ -207,6 +293,39 @@ class VideoHelper {
                 return (source.duration!! / 8) * source.bitrate;
             }
             else return 0;
+        }
+
+        fun mediaExtensionToMimetype(extension: String): String? {
+            return videoExtensionToMimetype(extension) ?: audioExtensionToMimetype(extension);
+        }
+        fun videoExtensionToMimetype(extension: String): String? {
+            val extensionTrimmed = extension.trim('.').lowercase();
+            return when (extensionTrimmed) {
+                "mp4" -> return "video/mp4";
+                "webm" -> return "video/webm";
+                "m3u8" -> return "video/x-mpegURL";
+                "3gp" -> return "video/3gpp";
+                "mov" -> return "video/quicktime";
+                "mkv" -> return "video/x-matroska";
+                "mp4a" -> return "audio/vnd.apple.mpegurl";
+                "mpga" -> return "audio/mpga";
+                "mp3" -> return "audio/mp3";
+                "webm" -> return "audio/webm";
+                "3gp" -> return "audio/3gpp";
+                else -> null;
+            }
+        }
+        fun audioExtensionToMimetype(extension: String): String? {
+            val extensionTrimmed = extension.trim('.').lowercase();
+            return when (extensionTrimmed) {
+                "mkv" -> return "audio/x-matroska";
+                "mp4a" -> return "audio/vnd.apple.mpegurl";
+                "mpga" -> return "audio/mpga";
+                "mp3" -> return "audio/mp3";
+                "webm" -> return "audio/webm";
+                "3gp" -> return "audio/3gpp";
+                else -> null;
+            }
         }
     }
 }

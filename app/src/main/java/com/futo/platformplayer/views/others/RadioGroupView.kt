@@ -13,6 +13,17 @@ class RadioGroupView : FlexboxLayout {
 
     val selectedOptions = arrayListOf<Any?>();
     val onSelectedChange = Event1<List<Any?>>();
+    constructor(context: Context) : super(context) {
+        flexWrap = FlexWrap.WRAP;
+        _padding_px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, _padding_dp, context.resources.displayMetrics).toInt();
+
+        if (isInEditMode) {
+            setOptions(listOf("Example 1" to 1, "Example 2" to 2, "Example 3" to 3, "Example 4" to 4, "Example 5" to 5), listOf("Example 1", "Example 2"),
+                multiSelect = true,
+                atLeastOne = false
+            );
+        }
+    }
     constructor(context: Context, attrs: AttributeSet) : super(context, attrs) {
         flexWrap = FlexWrap.WRAP;
         _padding_px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, _padding_dp, context.resources.displayMetrics).toInt();
@@ -39,6 +50,29 @@ class RadioGroupView : FlexboxLayout {
             radioView.layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
             radioView.setInfo(option.first, initiallySelectedOptions.contains(option.second));
             radioView.setPadding(_padding_px, _padding_px, _padding_px, _padding_px);
+            if(multiSelect)
+                radioView.onLongClick.subscribe {
+                    val selected = !radioView.selected;
+                    if (selected) {
+                        selectedOptions.clear();
+                        for(v in radioViews)
+                            v.setIsSelected(true);
+                        selectedOptions.addAll(options.map { it.second });
+                    } else {
+                        if(atLeastOne) {
+                            for(v in radioViews)
+                                v.setIsSelected(false);
+                            selectedOptions.clear();
+                            selectedOptions.add(option.second);
+                        }
+                        else {
+                            for(v in radioViews)
+                                v.setIsSelected(false);
+                            selectedOptions.clear();
+                        }
+                    }
+                    onSelectedChange.emit(selectedOptions);
+                }
             radioView.onClick.subscribe {
                 val selected = !radioView.selected;
                 if (selected) {

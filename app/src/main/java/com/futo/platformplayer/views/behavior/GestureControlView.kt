@@ -39,6 +39,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
+import java.util.Locale
+import kotlin.math.abs
 
 
 class GestureControlView : LinearLayout {
@@ -79,6 +83,9 @@ class GestureControlView : LinearLayout {
     private var _adjustingFullscreenDown: Boolean = false;
     private var _fullScreenFactorUp = 1.0f;
     private var _fullScreenFactorDown = 1.0f;
+    private val _layoutHoldSpeed: LinearLayout
+    private val _textHoldFastForward: TextView
+    private val _imageHoldFastForward: ImageView
 
     private var _scaleGestureDetector: ScaleGestureDetector
     private var _scaleFactor = 1.0f
@@ -92,6 +99,11 @@ class GestureControlView : LinearLayout {
     private var _surfaceView: View? = null
     private var _layoutIndicatorFill: FrameLayout;
     private var _layoutIndicatorFit: FrameLayout;
+    private var _speedHolding = false
+
+    private val _speedFormatter = DecimalFormat("#.##", DecimalFormatSymbols(Locale.US)).apply {
+        roundingMode = java.math.RoundingMode.HALF_UP
+    }
 
     private val _gestureController: GestureDetectorCompat;
 
@@ -103,6 +115,9 @@ class GestureControlView : LinearLayout {
     val onZoom = Event1<Float>();
     val onSoundAdjusted = Event1<Float>();
     val onToggleFullscreen = Event0();
+    val onTogglePlayPause = Event0();
+    val onSpeedHoldStart = Event0()
+    val onSpeedHoldEnd = Event0()
 
     var fullScreenGestureEnabled = true
 
@@ -124,6 +139,9 @@ class GestureControlView : LinearLayout {
         _layoutControlsFullscreen = findViewById(R.id.layout_controls_fullscreen);
         _layoutIndicatorFill = findViewById(R.id.layout_indicator_fill);
         _layoutIndicatorFit = findViewById(R.id.layout_indicator_fit);
+        _layoutHoldSpeed = findViewById(R.id.layout_controls_increased_speed)
+        _textHoldFastForward = findViewById(R.id.text_holdFastForward)
+        _imageHoldFastForward = findViewById(R.id.image_holdFastForward)
 
         _scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -216,7 +234,21 @@ class GestureControlView : LinearLayout {
 
                 return true;
             }
-            override fun onLongPress(p0: MotionEvent) = Unit
+            override fun onLongPress(p0: MotionEvent) {
+                if (!_isControlsLocked
+                    && !_skipping
+                    && !_adjustingBrightness
+                    && !_adjustingSound
+                    && !_adjustingFullscreenUp
+                    && !_adjustingFullscreenDown
+                    && !_isPanning
+                    && !_isZooming
+                    && Settings.instance.playback.getHoldPlaybackSpeed() > 1.0) {
+                    _speedHolding = true
+                    showHoldSpeedControls()
+                    onSpeedHoldStart.emit()
+                }
+            }
         });
 
         _gestureController.setOnDoubleTapListener(object : GestureDetector.OnDoubleTapListener {
@@ -239,8 +271,19 @@ class GestureControlView : LinearLayout {
                     return false;
                 }
 
-                val rewinding = (ev.x / width) < 0.5;
-                startFastForward(rewinding);
+                val centerArea = if (height != 0) 0.33f + (0.20f - 0.33f) * (((width.toFloat() / height.toFloat()) - 1f) / ((20f / 9f) - 1f)).coerceIn(0f, 1f) else 0.2f
+                val rewindArea = (1 - centerArea) / 2
+                val forwardArea = rewindArea
+                assert(abs(centerArea + rewindArea + forwardArea - 1) < 0.01)
+
+                val xfrac = ev.x / width
+                if (xfrac <= rewindArea) {
+                    startFastForward(true)
+                } else if (xfrac >= 1 - forwardArea) {
+                    startFastForward(false)
+                } else {
+                    onTogglePlayPause.emit()
+                }
                 return true;
             }
 
@@ -301,6 +344,17 @@ class GestureControlView : LinearLayout {
         onPan.emit(_translationX, _translationY)
     }
 
+    private fun showHoldSpeedControls() {
+        _layoutHoldSpeed.visibility = View.VISIBLE
+        _textHoldFastForward.text = _speedFormatter.format(Settings.instance.playback.getHoldPlaybackSpeed()) + "x"
+        (_imageHoldFastForward.drawable as? Animatable)?.start()
+    }
+
+    private fun hideHoldSpeedControls() {
+        _layoutHoldSpeed.visibility = View.GONE
+        (_imageHoldFastForward.drawable as? Animatable)?.stop()
+    }
+
     fun setupTouchArea(layoutControls: ViewGroup? = null, background: View? = null) {
         _layoutControls = layoutControls;
         _background = background;
@@ -308,6 +362,12 @@ class GestureControlView : LinearLayout {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         val ev = event ?: return super.onTouchEvent(event);
+
+        if (ev.action == MotionEvent.ACTION_UP && _speedHolding) {
+            _speedHolding = false
+            hideHoldSpeedControls()
+            onSpeedHoldEnd.emit()
+        }
 
         cancelHideJob();
 
@@ -628,12 +688,12 @@ class GestureControlView : LinearLayout {
     private fun fastForwardTick() {
         _fastForwardCounter++;
 
-        val seekOffset: Long = 10000;
+        val seekOffset: Long = Settings.instance.playback.getSeekOffset();
         if (_rewinding) {
-            _textRewind.text = "${_fastForwardCounter * 10} " + context.getString(R.string.seconds);
+            _textRewind.text = "${_fastForwardCounter * seekOffset / 1_000} " + context.getString(R.string.seconds);
             onSeek.emit(-seekOffset);
         } else {
-            _textFastForward.text = "${_fastForwardCounter * 10} " + context.getString(R.string.seconds);
+            _textFastForward.text = "${_fastForwardCounter * seekOffset / 1_000} " + context.getString(R.string.seconds);
             onSeek.emit(seekOffset);
         }
     }
@@ -735,24 +795,43 @@ class GestureControlView : LinearLayout {
         _animatorBrightness?.start();
     }
 
+    fun saveBrightness() {
+        try {
+            _originalBrightnessMode = android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE)
+
+            val brightness = android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+            _brightnessFactor = brightness / 255.0f;
+            Log.i(TAG, "Starting brightness brightness: $brightness, _brightnessFactor: $_brightnessFactor, _originalBrightnessMode: $_originalBrightnessMode")
+
+            _originalBrightnessFactor = _brightnessFactor
+        } catch (e: Throwable) {
+            Settings.instance.gestureControls.useSystemBrightness = false
+            Settings.instance.save()
+            UIDialogs.toast(context, "useSystemBrightness disabled due to an error")
+        }
+    }
+    fun restoreBrightness() {
+        if (Settings.instance.gestureControls.restoreSystemBrightness) {
+            onBrightnessAdjusted.emit(_originalBrightnessFactor)
+
+            if (android.provider.Settings.System.canWrite(context)) {
+                Log.i(TAG, "Restoring system brightness mode _originalBrightnessMode: $_originalBrightnessMode")
+
+                android.provider.Settings.System.putInt(
+                    context.contentResolver,
+                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    _originalBrightnessMode
+                )
+            }
+        }
+    }
+
     fun setFullscreen(isFullScreen: Boolean) {
         resetZoomPan()
 
         if (isFullScreen) {
             if (Settings.instance.gestureControls.useSystemBrightness) {
-                try {
-                    _originalBrightnessMode = android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE)
-
-                    val brightness = android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
-                    _brightnessFactor = brightness / 255.0f;
-                    Log.i(TAG, "Starting brightness brightness: $brightness, _brightnessFactor: $_brightnessFactor, _originalBrightnessMode: $_originalBrightnessMode")
-
-                    _originalBrightnessFactor = _brightnessFactor
-                } catch (e: Throwable) {
-                    Settings.instance.gestureControls.useSystemBrightness = false
-                    Settings.instance.save()
-                    UIDialogs.toast(context, "useSystemBrightness disabled due to an error")
-                }
+                saveBrightness()
             }
 
             if (Settings.instance.gestureControls.useSystemVolume) {
@@ -766,19 +845,7 @@ class GestureControlView : LinearLayout {
             onSoundAdjusted.emit(_soundFactor);
         } else {
             if (Settings.instance.gestureControls.useSystemBrightness) {
-                if (Settings.instance.gestureControls.restoreSystemBrightness) {
-                    onBrightnessAdjusted.emit(_originalBrightnessFactor)
-
-                    if (android.provider.Settings.System.canWrite(context)) {
-                        Log.i(TAG, "Restoring system brightness mode _originalBrightnessMode: $_originalBrightnessMode")
-
-                        android.provider.Settings.System.putInt(
-                            context.contentResolver,
-                            android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
-                            _originalBrightnessMode
-                        )
-                    }
-                }
+                restoreBrightness()
             } else {
                 onBrightnessAdjusted.emit(1.0f);
             }

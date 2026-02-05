@@ -9,6 +9,8 @@ import com.futo.platformplayer.api.media.platforms.js.models.JSRequestExecutor
 import com.futo.platformplayer.engine.V8Plugin
 import com.futo.platformplayer.getOrNull
 import com.futo.platformplayer.getOrThrow
+import com.futo.platformplayer.invokeV8
+import com.futo.platformplayer.invokeV8Void
 
 class JSDashManifestWidevineSource : IVideoUrlSource, IDashManifestSource,
     IDashManifestWidevineSource, JSSource {
@@ -26,6 +28,9 @@ class JSDashManifestWidevineSource : IVideoUrlSource, IDashManifestSource,
     override val licenseUri: String
     override val hasLicenseRequestExecutor: Boolean
 
+    override val language: String?;
+    override val original: Boolean?;
+
     @Suppress("ConvertSecondaryConstructorToPrimary")
     constructor(plugin: JSClient, obj: V8ValueObject) : super(TYPE_DASH, plugin, obj) {
         val contextName = "DashWidevineSource"
@@ -38,6 +43,9 @@ class JSDashManifestWidevineSource : IVideoUrlSource, IDashManifestSource,
 
         licenseUri = _obj.getOrThrow(config, "licenseUri", contextName)
         hasLicenseRequestExecutor = obj.has("getLicenseRequestExecutor")
+
+        language = _obj.getOrNull(config, "language", contextName);
+        original = _obj.getOrNull(config, "original", contextName);
     }
 
     override fun getLicenseRequestExecutor(): JSRequestExecutor? {
@@ -45,7 +53,7 @@ class JSDashManifestWidevineSource : IVideoUrlSource, IDashManifestSource,
             return null
 
         val result = V8Plugin.catchScriptErrors<Any>(_config, "[${_config.name}] JSDashManifestWidevineSource", "obj.getLicenseRequestExecutor()") {
-            _obj.invoke("getLicenseRequestExecutor", arrayOf<Any>())
+            _obj.invokeV8("getLicenseRequestExecutor", arrayOf<Any>())
         }
 
         if (result !is V8ValueObject)

@@ -64,12 +64,6 @@
 [submodule "app/src/stable/assets/sources/bilibili"]
 	path = app/src/stable/assets/sources/bilibili
 	url = ../plugins/bilibili.git
-[submodule "app/src/stable/assets/sources/spotify"]
-	path = app/src/stable/assets/sources/spotify
-	url = ../plugins/spotify.git
-[submodule "app/src/unstable/assets/sources/spotify"]
-	path = app/src/unstable/assets/sources/spotify
-	url = ../plugins/spotify.git
 [submodule "app/src/stable/assets/sources/bitchute"]
 	path = app/src/stable/assets/sources/bitchute
 	url = ../plugins/bitchute.git
@@ -83,8 +77,32 @@
 	path = app/src/stable/assets/sources/dailymotion
 	url = ../plugins/dailymotion.git
 [submodule "app/src/stable/assets/sources/apple-podcast"]
-	path = app/src/stable/assets/sources/apple-podcast
+	path = app/src/stable/assets/sources/apple-podcasts
 	url = ../plugins/apple-podcasts.git
 [submodule "app/src/unstable/assets/sources/apple-podcasts"]
 	path = app/src/unstable/assets/sources/apple-podcasts
 	url = ../plugins/apple-podcasts.git
+[submodule "app/src/stable/assets/sources/tedtalks"]
+	path = app/src/stable/assets/sources/tedtalks
+	url = ../plugins/tedtalks.git
+[submodule "app/src/unstable/assets/sources/tedtalks"]
+	path = app/src/unstable/assets/sources/tedtalks
+	url = ../plugins/tedtalks.git
+[submodule "app/src/stable/assets/sources/curiositystream"]
+	path = app/src/stable/assets/sources/curiositystream
+	url = ../plugins/curiositystream.git
+[submodule "app/src/unstable/assets/sources/curiositystream"]
+	path = app/src/unstable/assets/sources/curiositystream
+	url = ../plugins/curiositystream.git
+[submodule "app/src/unstable/assets/sources/crunchyroll"]
+	path = app/src/unstable/assets/sources/crunchyroll
+	url = ../plugins/crunchyroll.git
+[submodule "app/src/stable/assets/sources/crunchyroll"]
+	path = app/src/stable/assets/sources/crunchyroll
+	url = ../plugins/crunchyroll.git
+[submodule "app/src/stable/assets/sources/mixcloud"]
+	path = app/src/stable/assets/sources/mixcloud
+	url = ../plugins/mixcloud.git
+[submodule "app/src/unstable/assets/sources/mixcloud"]
+	path = app/src/unstable/assets/sources/mixcloud
+	url = ../plugins/mixcloud.git

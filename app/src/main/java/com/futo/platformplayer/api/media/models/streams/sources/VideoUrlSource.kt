@@ -14,9 +14,13 @@ open class VideoUrlSource(
     override val codec : String = "",
     override val bitrate : Int? = 0,
 
-    override var priority: Boolean = false
+    override var priority: Boolean = false,
+    var isLocal: Boolean = false
 ) : IVideoUrlSource, IStreamMetaDataSource {
     override var streamMetaData: StreamMetaData? = null;
+
+    override val language: String? = null;
+    override val original: Boolean? = false;
 
     override fun getVideoUrl() : String {
         return url;

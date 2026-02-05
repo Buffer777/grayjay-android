@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.Animatable
 import android.net.Uri
 import android.text.Layout
 import android.text.method.ScrollingMovementMethod
@@ -112,8 +113,8 @@ class UIDialogs {
                 currentDialog.code,
                 currentDialog.defaultCloseAction,
                 *currentDialog.actions.map {
-                    return@map Action(it.text, {
-                        it.action();
+                    return@map Action.withInput(it.text, { str ->
+                        it.invokeAction(str);
                         multiShowDialog(context, dialogDescriptor.drop(1), finally);
                     }, it.style);
                 }.toTypedArray());
@@ -199,16 +200,23 @@ class UIDialogs {
             dialog.show();
         }
 
-        fun showDialog(context: Context, icon: Int, text: String, textDetails: String? = null, code: String? = null, defaultCloseAction: Int, vararg actions: Action) {
+        fun showDialog(context: Context, icon: Int, text: String, textDetails: String? = null, code: String? = null, defaultCloseAction: Int, vararg actions: Action): AlertDialog {
+            return showDialog(context, icon, false, text, textDetails, code, defaultCloseAction, *actions);
+        }
+        fun showDialog(context: Context, icon: Int, animated: Boolean, text: String, textDetails: String? = null, code: String? = null, defaultCloseAction: Int, vararg actions: Action): AlertDialog
+            = showDialog(context, icon, animated, text, textDetails, code, null, null, defaultCloseAction, *actions);
+        fun showDialog(context: Context, icon: Int, animated: Boolean, text: String, textDetails: String? = null, code: String? = null, input: String?, placeholder: String?, defaultCloseAction: Int, vararg actions: Action): AlertDialog {
             val builder = AlertDialog.Builder(context);
             val view = LayoutInflater.from(context).inflate(R.layout.dialog_multi_button, null);
             builder.setView(view);
-
+            builder.setCancelable(defaultCloseAction > -2);
             val dialog = builder.create();
             registerDialogOpened(dialog);
 
             view.findViewById<ImageView>(R.id.dialog_icon).apply {
                 this.setImageResource(icon);
+                if(animated)
+                    this.drawable.assume<Animatable, Unit> { it.start() };
             }
             view.findViewById<TextView>(R.id.dialog_text).apply {
                 this.text = text;
@@ -218,6 +226,16 @@ class UIDialogs {
                     this.visibility = View.GONE;
                 else {
                     this.text = textDetails;
+                }
+            };
+            var inputView = view.findViewById<TextView>(R.id.dialog_text_input);
+            inputView.apply {
+                if (input == null && placeholder == null) this.visibility = View.GONE;
+                else {
+                    this.text = input ?: "";
+                    this.hint = placeholder ?: "";
+                    this.visibility = View.VISIBLE;
+                    this.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
                 }
             };
             view.findViewById<TextView>(R.id.dialog_text_code).apply {
@@ -244,7 +262,7 @@ class UIDialogs {
                     buttonView.textSize = 14f;
                     buttonView.typeface = resources.getFont(R.font.inter_regular);
                     buttonView.text = act.text;
-                    buttonView.setOnClickListener { act.action(); dialog.dismiss(); };
+                    buttonView.setOnClickListener { act.invokeAction(DialogResult(inputView?.text?.toString())); dialog.dismiss(); };
                     when(act.style) {
                         ActionStyle.PRIMARY -> buttonView.setBackgroundResource(R.drawable.background_button_primary);
                         ActionStyle.ACCENT -> buttonView.setBackgroundResource(R.drawable.background_button_accent);
@@ -269,12 +287,13 @@ class UIDialogs {
             };
             dialog.setOnCancelListener {
                 if(defaultCloseAction >= 0 && defaultCloseAction < actions.size)
-                    actions[defaultCloseAction].action();
+                    actions[defaultCloseAction].invokeAction(DialogResult(inputView?.text?.toString()));
             }
             dialog.setOnDismissListener {
                 registerDialogClosed(dialog);
             }
             dialog.show();
+            return dialog;
         }
 
         fun showGeneralErrorDialog(context: Context, msg: String, ex: Throwable? = null, button: String = "Ok", onOk: (()->Unit)? = null) {
@@ -312,7 +331,11 @@ class UIDialogs {
                         closeAction?.invoke()
                     }, UIDialogs.ActionStyle.NONE),
                     UIDialogs.Action(context.getString(R.string.retry), {
-                        retryAction?.invoke();
+                        try {
+                            retryAction?.invoke();
+                        } catch (e: Throwable) {
+                            Logger.e(TAG, "Unhandled exception retrying", e)
+                        }
                     }, UIDialogs.ActionStyle.PRIMARY)
                 );
             else
@@ -326,7 +349,11 @@ class UIDialogs {
                         closeAction?.invoke()
                     }, UIDialogs.ActionStyle.NONE),
                     UIDialogs.Action(context.getString(R.string.retry), {
-                        retryAction?.invoke();
+                        try {
+                            retryAction?.invoke();
+                        } catch (e: Throwable) {
+                            Logger.e(TAG, "Unhandled exception retrying", e)
+                        }
                     }, UIDialogs.ActionStyle.PRIMARY)
                 );
         }
@@ -343,17 +370,19 @@ class UIDialogs {
         }
 
 
-        fun showConfirmationDialog(context: Context, text: String, action: () -> Unit, cancelAction: (() -> Unit)? = null) {
+        fun showConfirmationDialog(context: Context, text: String, action: () -> Unit, cancelAction: (() -> Unit)? = null, dismissAction: (() -> Unit)? = null): AlertDialog {
             val confirmButtonAction = Action(context.getString(R.string.confirm), action, ActionStyle.PRIMARY)
             val cancelButtonAction = Action(context.getString(R.string.cancel), cancelAction ?: {}, ActionStyle.ACCENT)
-            showDialog(context, R.drawable.ic_error, text, null, null, 0, cancelButtonAction, confirmButtonAction)
+            return showDialog(context, R.drawable.ic_error, text, null, null, 0, cancelButtonAction, confirmButtonAction).apply {
+                setOnDismissListener { dismissAction?.invoke() }
+            }
         }
 
-        fun showConfirmationDialog(context: Context, text: String, action: () -> Unit, cancelAction: (() -> Unit)? = null, doNotAskAgainAction: (() -> Unit)? = null) {
+        fun showConfirmationDialog(context: Context, text: String, action: () -> Unit, cancelAction: (() -> Unit)? = null, dismissAction: (() -> Unit)? = null, doNotAskAgainAction: (() -> Unit)? = null): AlertDialog {
             val confirmButtonAction = Action(context.getString(R.string.confirm), action, ActionStyle.PRIMARY)
             val cancelButtonAction = Action(context.getString(R.string.cancel), cancelAction ?: {}, ActionStyle.ACCENT)
             val doNotAskAgain = Action(context.getString(R.string.do_not_ask_again), doNotAskAgainAction ?: {}, ActionStyle.NONE)
-            showDialog(context, R.drawable.ic_error, text, null, null, 0, doNotAskAgain, cancelButtonAction, confirmButtonAction)
+            return showDialog(context, R.drawable.ic_error, text, null, null, 0, doNotAskAgain, cancelButtonAction, confirmButtonAction)
         }
 
         fun showUpdateAvailableDialog(context: Context, lastVersion: Int, hideExceptionButtons: Boolean = false) {
@@ -374,13 +403,6 @@ class UIDialogs {
             dialog.setOnDismissListener { registerDialogClosed(dialog) };
             dialog.show();
             dialog.setMaxVersion(lastVersion);
-        }
-
-        fun showInstallDownloadedUpdateDialog(context: Context, apkFile: File) {
-            val dialog = AutoUpdateDialog(context);
-            registerDialogOpened(dialog);
-            dialog.setOnDismissListener { registerDialogClosed(dialog) };
-            dialog.showPredownloaded(apkFile);
         }
 
         fun showMigrateDialog(context: Context, store: ManagedStore<*>, onConcluded: ()->Unit) {
@@ -409,7 +431,7 @@ class UIDialogs {
         }
 
 
-        fun showCastingDialog(context: Context) {
+        fun showCastingDialog(context: Context, ownerActivity: Activity? = null) {
             val d = StateCasting.instance.activeDevice;
             if (d != null) {
                 val dialog = ConnectedCastingDialog(context);
@@ -417,6 +439,7 @@ class UIDialogs {
                     dialog.setOwnerActivity(context)
                 }
                 registerDialogOpened(dialog);
+                ownerActivity?.let { dialog.setOwnerActivity(it) }
                 dialog.setOnDismissListener { registerDialogClosed(dialog) };
                 dialog.show();
             } else {
@@ -429,21 +452,24 @@ class UIDialogs {
                 if (c is Activity) {
                     dialog.setOwnerActivity(c);
                 }
+                ownerActivity?.let { dialog.setOwnerActivity(it) }
                 dialog.setOnDismissListener { registerDialogClosed(dialog) };
                 dialog.show();
             }
         }
 
-        fun showCastingTutorialDialog(context: Context) {
+        fun showCastingTutorialDialog(context: Context, ownerActivity: Activity? = null) {
             val dialog = CastingHelpDialog(context);
             registerDialogOpened(dialog);
+            ownerActivity?.let { dialog.setOwnerActivity(it) }
             dialog.setOnDismissListener { registerDialogClosed(dialog) };
             dialog.show();
         }
 
-        fun showCastingAddDialog(context: Context) {
+        fun showCastingAddDialog(context: Context, ownerActivity: Activity? = null) {
             val dialog = CastingAddDialog(context);
             registerDialogOpened(dialog);
+            ownerActivity?.let { dialog.setOwnerActivity(it) }
             dialog.setOnDismissListener { registerDialogClosed(dialog) };
             dialog.show();
         }
@@ -516,17 +542,36 @@ class UIDialogs {
     }
     class Action {
         val text: String;
-        val action: ()->Unit;
+        val action: ((DialogResult?)->Unit);
         val style: ActionStyle;
         var center: Boolean;
 
         constructor(text: String, action: ()->Unit, style: ActionStyle = ActionStyle.NONE, center: Boolean = false) {
             this.text = text;
+            this.action = { action() };
+            this.style = style;
+            this.center = center;
+        }
+        protected constructor(text: String, action: (DialogResult?)->Unit, style: ActionStyle = ActionStyle.NONE, center: Boolean = false) {
+            this.text = text;
             this.action = action;
             this.style = style;
             this.center = center;
         }
+
+        fun invokeAction(input: DialogResult? = null) {
+            this.action(input);
+        }
+
+        companion object {
+            fun withInput(text: String, action: (DialogResult?)->Unit, style: ActionStyle = ActionStyle.NONE, center: Boolean = false): Action {
+                return Action(text, action, style, center);
+            }
+        }
     }
+    class DialogResult(
+      val text: String?
+    );
     enum class ActionStyle {
         NONE,
         PRIMARY,

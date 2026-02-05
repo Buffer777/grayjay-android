@@ -18,6 +18,7 @@ import com.futo.platformplayer.engine.dev.V8RemoteObject
 import com.futo.platformplayer.engine.dev.V8RemoteObject.Companion.gsonStandard
 import com.futo.platformplayer.engine.dev.V8RemoteObject.Companion.serialize
 import com.futo.platformplayer.engine.packages.PackageHttp
+import com.futo.platformplayer.fragment.mainactivity.main.LoginFragment
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateAssets
@@ -28,6 +29,8 @@ import com.google.gson.FieldAttributes
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.lang.reflect.Field
@@ -47,10 +50,10 @@ class DeveloperEndpoints(private val context: Context) {
     private val testPluginOrThrow: V8Plugin get() = _testPlugin ?: throw IllegalStateException("Attempted to use test plugin without plugin");
     private val _testPluginVariables: HashMap<String, V8RemoteObject> = hashMapOf();
 
-    private inline fun <reified T> createRemoteObjectArray(objs: Iterable<T>): List<V8RemoteObject> {
-        val remotes = mutableListOf<V8RemoteObject>();
+    private inline fun <reified T> createRemoteObjectArray(objs: Iterable<T>): List<V8RemoteObject?> {
+        val remotes = mutableListOf<V8RemoteObject?>();
         for(obj in objs)
-            remotes.add(createRemoteObject(obj)!!);
+            remotes.add(createRemoteObject(obj));
         return remotes;
     }
     private inline fun <reified T> createRemoteObject(obj: T): V8RemoteObject? {
@@ -268,11 +271,17 @@ class DeveloperEndpoints(private val context: Context) {
                 context.respondCode(403, "This plugin doesn't support auth");
                 return;
             }
+            StateApp.instance.scopeOrNull?.launch(Dispatchers.Main) {
+                LoginFragment.showLogin(config){
+                    _testPluginVariables.clear();
+                    _testPlugin = V8Plugin(StateApp.instance.context, config, null, JSHttpClient(null, null, null, config), JSHttpClient(null, it, null, config));
+                };
+            }
+            /*
             LoginActivity.showLogin(StateApp.instance.context, config) {
                 _testPluginVariables.clear();
                 _testPlugin = V8Plugin(StateApp.instance.context, config, null, JSHttpClient(null, null, null, config), JSHttpClient(null, it, null, config));
-
-            };
+            }; */
             context.respondCode(200, "Login started");
         }
         catch(ex: Throwable) {

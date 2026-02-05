@@ -411,6 +411,7 @@
     <string name="unhandled_exception_in_vs">VS 中的未处理异常</string>
     <string name="send_exception_to_developers">向开发者发送异常…</string>
     <string name="your_license_key_has_been_set_an_app_restart_might_be_required">您的许可证密钥已设置！\n可能需要重新启动应用程序。</string>
+    <string name="qr_code_too_large_use_text_below">二维码太大。请使用下方文字分享您的个人资料。</string>
     <string name="invalid_license_format">无效的许可证格式</string>
     <string name="unknown_content_format">未知的内容格式</string>
     <string name="unknown_file_format">未知的文件格式</string>
@@ -703,5 +704,20 @@
     <string-array name="comments_sortby_array">
         <item>Newest</item>
         <item>Oldest</item>
+    </string-array>
+    <string-array name="app_languages">
+        <item>系统</item>
+        <item>英语 (EN)</item>
+        <item>德语 (DE)</item>
+        <item>西班牙语 (ES)</item>
+        <item>葡萄牙语 (PT)</item>
+        <item>法语 (FR)</item>
+        <item>日语 (JA)</item>
+        <item>韩语 (KO)</item>
+        <item>中文 (ZH)</item>
+        <item>俄语 (RU)</item>
+        <item>阿拉伯语 (AR)</item>
+        <item>意大利语 (IT)</item>
+        <item>土耳其语 (TR)</item>
     </string-array>
 </resources>

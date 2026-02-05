@@ -1,26 +1,28 @@
 package com.futo.platformplayer.activities
 
 import android.annotation.SuppressLint
-import android.content.ComponentName
+import android.app.AlertDialog
+import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.media.AudioManager
+import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.StrictMode
 import android.os.StrictMode.VmPolicy
 import android.util.Log
 import android.util.TypedValue
 import android.view.View
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.motion.widget.MotionLayout
 import androidx.core.app.ActivityCompat
@@ -30,15 +32,20 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentContainerView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStateAtLeast
 import androidx.media3.common.util.UnstableApi
 import com.futo.platformplayer.BuildConfig
 import com.futo.platformplayer.R
+import com.futo.platformplayer.RootInsetsController
 import com.futo.platformplayer.Settings
 import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.api.http.ManagedHttpClient
+import com.futo.platformplayer.api.media.models.video.LocalVideoDetails
 import com.futo.platformplayer.casting.StateCasting
 import com.futo.platformplayer.constructs.Event1
+import com.futo.platformplayer.dp
 import com.futo.platformplayer.fragment.mainactivity.bottombar.MenuBottomBarFragment
+import com.futo.platformplayer.fragment.mainactivity.main.ArticleDetailFragment
 import com.futo.platformplayer.fragment.mainactivity.main.BrowserFragment
 import com.futo.platformplayer.fragment.mainactivity.main.BuyFragment
 import com.futo.platformplayer.fragment.mainactivity.main.ChannelFragment
@@ -46,17 +53,29 @@ import com.futo.platformplayer.fragment.mainactivity.main.CommentsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.ContentSearchResultsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.CreatorSearchResultsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.CreatorsFragment
+import com.futo.platformplayer.fragment.mainactivity.main.DeveloperFragment
 import com.futo.platformplayer.fragment.mainactivity.main.DownloadsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.HistoryFragment
 import com.futo.platformplayer.fragment.mainactivity.main.HomeFragment
 import com.futo.platformplayer.fragment.mainactivity.main.ImportPlaylistsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.ImportSubscriptionsFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryAlbumFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryAlbumsFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryArtistFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryArtistsFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryFilesFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibrarySearchFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LibraryVideosFragment
+import com.futo.platformplayer.fragment.mainactivity.main.LoginFragment
 import com.futo.platformplayer.fragment.mainactivity.main.MainFragment
 import com.futo.platformplayer.fragment.mainactivity.main.PlaylistFragment
 import com.futo.platformplayer.fragment.mainactivity.main.PlaylistSearchResultsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.PlaylistsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.PostDetailFragment
 import com.futo.platformplayer.fragment.mainactivity.main.RemotePlaylistFragment
+import com.futo.platformplayer.fragment.mainactivity.main.SettingsFragment
+import com.futo.platformplayer.fragment.mainactivity.main.ShortsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SourceDetailFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SourcesFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SubscriptionGroupFragment
@@ -65,8 +84,11 @@ import com.futo.platformplayer.fragment.mainactivity.main.SubscriptionsFeedFragm
 import com.futo.platformplayer.fragment.mainactivity.main.SuggestionsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.TutorialFragment
 import com.futo.platformplayer.fragment.mainactivity.main.VideoDetailFragment
+import com.futo.platformplayer.fragment.mainactivity.main.VideoDetailFragment.State
 import com.futo.platformplayer.fragment.mainactivity.main.WatchLaterFragment
+import com.futo.platformplayer.fragment.mainactivity.main.WebDetailFragment
 import com.futo.platformplayer.fragment.mainactivity.topbar.AddTopBarFragment
+import com.futo.platformplayer.fragment.mainactivity.topbar.FilesTopBarFragment
 import com.futo.platformplayer.fragment.mainactivity.topbar.GeneralTopBarFragment
 import com.futo.platformplayer.fragment.mainactivity.topbar.ImportTopBarFragment
 import com.futo.platformplayer.fragment.mainactivity.topbar.NavigationTopBarFragment
@@ -74,7 +96,6 @@ import com.futo.platformplayer.fragment.mainactivity.topbar.SearchTopBarFragment
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.ImportCache
 import com.futo.platformplayer.models.UrlVideoWithTime
-import com.futo.platformplayer.receivers.MediaButtonReceiver
 import com.futo.platformplayer.setNavigationBarColorAndIcons
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateBackup
@@ -89,6 +110,7 @@ import com.futo.platformplayer.stores.StringStorage
 import com.futo.platformplayer.stores.SubscriptionStorage
 import com.futo.platformplayer.stores.v2.ManagedStore
 import com.futo.platformplayer.views.ToastView
+import com.futo.platformplayer.views.notification.NotificationOverlayView
 import com.futo.polycentric.core.ApiMethods
 import com.google.gson.JsonParser
 import com.google.zxing.integration.android.IntentIntegrator
@@ -107,7 +129,7 @@ import java.io.PrintWriter
 import java.io.StringWriter
 import java.lang.reflect.InvocationTargetException
 import java.util.LinkedList
-import java.util.Queue
+import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
 
@@ -139,6 +161,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
     lateinit var _fragTopBarNavigation: NavigationTopBarFragment;
     lateinit var _fragTopBarImport: ImportTopBarFragment;
     lateinit var _fragTopBarAdd: AddTopBarFragment;
+    lateinit var _fragTopBarFiles: FilesTopBarFragment;
 
     //Frags BotBar
     lateinit var _fragBotBarMenu: MenuBottomBarFragment;
@@ -146,6 +169,8 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
     //Frags Main
     lateinit var _fragMainHome: HomeFragment;
     lateinit var _fragPostDetail: PostDetailFragment;
+    lateinit var _fragArticleDetail: ArticleDetailFragment;
+    lateinit var _fragWebDetail: WebDetailFragment;
     lateinit var _fragMainVideoSearchResults: ContentSearchResultsFragment;
     lateinit var _fragMainCreatorSearchResults: CreatorSearchResultsFragment;
     lateinit var _fragMainPlaylistSearchResults: PlaylistSearchResultsFragment;
@@ -161,6 +186,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
     lateinit var _fragMainRemotePlaylist: RemotePlaylistFragment;
     lateinit var _fragWatchlist: WatchLaterFragment;
     lateinit var _fragHistory: HistoryFragment;
+    lateinit var _fragShorts: ShortsFragment;
     lateinit var _fragSourceDetail: SourceDetailFragment;
     lateinit var _fragDownloads: DownloadsFragment;
     lateinit var _fragImportSubscriptions: ImportSubscriptionsFragment;
@@ -168,6 +194,18 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
     lateinit var _fragBuy: BuyFragment;
     lateinit var _fragSubGroup: SubscriptionGroupFragment;
     lateinit var _fragSubGroupList: SubscriptionGroupListFragment;
+    lateinit var _fragLibrary: LibraryFragment;
+    lateinit var _fragLibraryAlbums: LibraryAlbumsFragment;
+    lateinit var _fragLibraryAlbum: LibraryAlbumFragment;
+    lateinit var _fragLibraryArtists: LibraryArtistsFragment;
+    lateinit var _fragLibraryArtist: LibraryArtistFragment;
+    lateinit var _fragLibraryVideos: LibraryVideosFragment;
+    lateinit var _fragLibrarySearch: LibrarySearchFragment;
+    lateinit var _fragLibraryFiles: LibraryFilesFragment;
+    lateinit var _fragNotifications: NotificationOverlayView.Frag;
+    lateinit var _fragSettings: SettingsFragment;
+    lateinit var _fragDeveloper: DeveloperFragment;
+    lateinit var _fragLogin: LoginFragment;
 
     lateinit var _fragBrowser: BrowserFragment;
 
@@ -175,8 +213,8 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
     lateinit var _fragVideoDetail: VideoDetailFragment;
 
     //State
-    private val _queue: Queue<Pair<MainFragment, Any?>> = LinkedList();
-    lateinit var fragCurrent: MainFragment private set;
+    private val _queue: LinkedList<Pair<MainFragment, Any?>> = LinkedList();
+    var fragCurrent: MainFragment? = null; private set;
     private var _parameterCurrent: Any? = null;
 
     var fragBeforeOverlay: MainFragment? = null; private set;
@@ -185,6 +223,10 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
     private var _isVisible = true;
     private var _wasStopped = false;
+    private var _privateModeEnabled = false
+    private var _pictureInPictureEnabled = false
+    private var _isFullscreen = false
+    private lateinit var _rootInsetsController: RootInsetsController
 
     private val _urlQrCodeResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val scanResult = IntentIntegrator.parseActivityResult(result.resultCode, result.data)
@@ -196,7 +238,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             }
 
             try {
-                runBlocking {
+                lifecycleScope.launch {
                     handleUrlAll(content)
                 }
             } catch (e: Throwable) {
@@ -205,6 +247,8 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             }
         }
     }
+
+    val mainId = UUID.randomUUID().toString().substring(0, 5)
 
     constructor() : super() {
         if (BuildConfig.DEBUG) {
@@ -257,19 +301,29 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
     @UnstableApi
     override fun onCreate(savedInstanceState: Bundle?) {
-        Logger.i(TAG, "MainActivity Starting");
-        StateApp.instance.setGlobalContext(this, lifecycleScope);
+        Logger.w(TAG, "MainActivity Starting [$mainId]");
+
+        StateApp.instance.setGlobalContext(this, lifecycleScope, mainId);
         StateApp.instance.mainAppStarting(this);
 
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val uiMode = getSystemService(UiModeManager::class.java)
+            uiMode.setApplicationNightMode(UiModeManager.MODE_NIGHT_YES)
+        }
         setContentView(R.layout.activity_main);
         setNavigationBarColorAndIcons();
-        if (Settings.instance.playback.allowVideoToGoUnderCutout)
-            window.attributes.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
 
         runBlocking {
-            StatePlatform.instance.updateAvailableClients(this@MainActivity);
+            try {
+                StatePlatform.instance.updateAvailableClients(this@MainActivity);
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Unhandled exception in updateAvailableClients", e)
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
         }
 
         //Preload common files to memory
@@ -277,6 +331,9 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         FragmentedStorage.get<Settings>();
 
         rootView = findViewById(R.id.rootView);
+        _rootInsetsController = RootInsetsController.attach(this, rootView)
+        _rootInsetsController.setLightSystemBarAppearance(lightStatus = false, lightNav = false)
+
         _fragContainerTopBar = findViewById(R.id.fragment_top_bar);
         _fragContainerMain = findViewById(R.id.fragment_main);
         _fragContainerBotBar = findViewById(R.id.fragment_bottom_bar);
@@ -293,6 +350,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         _fragTopBarNavigation = NavigationTopBarFragment.newInstance();
         _fragTopBarImport = ImportTopBarFragment.newInstance();
         _fragTopBarAdd = AddTopBarFragment.newInstance();
+        _fragTopBarFiles = FilesTopBarFragment.newInstance();
 
         //BotBars
         _fragBotBarMenu = MenuBottomBarFragment.newInstance();
@@ -313,8 +371,11 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         _fragMainPlaylist = PlaylistFragment.newInstance();
         _fragMainRemotePlaylist = RemotePlaylistFragment.newInstance();
         _fragPostDetail = PostDetailFragment.newInstance();
+        _fragArticleDetail = ArticleDetailFragment.newInstance();
+        _fragWebDetail = WebDetailFragment.newInstance();
         _fragWatchlist = WatchLaterFragment.newInstance();
         _fragHistory = HistoryFragment.newInstance();
+        _fragShorts = ShortsFragment.newInstance();
         _fragSourceDetail = SourceDetailFragment.newInstance();
         _fragDownloads = DownloadsFragment();
         _fragImportSubscriptions = ImportSubscriptionsFragment.newInstance();
@@ -322,6 +383,18 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         _fragBuy = BuyFragment.newInstance();
         _fragSubGroup = SubscriptionGroupFragment.newInstance();
         _fragSubGroupList = SubscriptionGroupListFragment.newInstance();
+        _fragLibrary = LibraryFragment.newInstance();
+        _fragLibraryAlbums = LibraryAlbumsFragment.newInstance();
+        _fragLibraryAlbum = LibraryAlbumFragment.newInstance();
+        _fragLibraryArtists = LibraryArtistsFragment.newInstance();
+        _fragLibraryArtist = LibraryArtistFragment.newInstance();
+        _fragLibraryVideos = LibraryVideosFragment.newInstance();
+        _fragLibraryFiles = LibraryFilesFragment.newInstance();
+        _fragLibrarySearch = LibrarySearchFragment.newInstance();
+        _fragNotifications = NotificationOverlayView.Frag();
+        _fragSettings = SettingsFragment.newInstance();
+        _fragDeveloper = DeveloperFragment.newInstance();
+        _fragLogin = LoginFragment.newInstance();
 
         _fragBrowser = BrowserFragment.newInstance();
 
@@ -340,12 +413,17 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             updateSegmentPaddings();
         };
         _fragVideoDetail.onTransitioning.subscribe {
-            if (it || _fragVideoDetail.state != VideoDetailFragment.State.MINIMIZED)
+            if (it || _fragVideoDetail.state != VideoDetailFragment.State.MINIMIZED) {
+                Logger.i(TAG, "onTransition Setting elevation higher");
                 _fragContainerOverlay.elevation =
                     TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 15f, resources.displayMetrics);
-            else
+            }
+            else {
+                Logger.i(TAG, "onTransition Setting elevation lower");
                 _fragContainerOverlay.elevation =
                     TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 5f, resources.displayMetrics);
+            }
+
         }
 
         _fragVideoDetail.onCloseEvent.subscribe {
@@ -354,22 +432,18 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             _fragMainSubscriptionsFeed.setPreviewsEnabled(true);
             _fragContainerVideoDetail.visibility = View.INVISIBLE;
             updateSegmentPaddings();
+            updatePrivateModeVisibility()
         };
 
 
         _buttonIncognito = findViewById(R.id.incognito_button);
-        _buttonIncognito.elevation = -99f;
-        _buttonIncognito.alpha = 0f;
+        updatePrivateModeVisibility()
         StateApp.instance.privateModeChanged.subscribe {
             //Messing with visibility causes some issues with layout ordering?
-            if (it) {
-                _buttonIncognito.elevation = 99f;
-                _buttonIncognito.alpha = 1f;
-            } else {
-                _buttonIncognito.elevation = -99f;
-                _buttonIncognito.alpha = 0f;
-            }
+            _privateModeEnabled = it
+            updatePrivateModeVisibility()
         }
+
         _buttonIncognito.setOnClickListener {
             if (!StateApp.instance.privateMode)
                 return@setOnClickListener;
@@ -386,19 +460,21 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         };
         _fragVideoDetail.onFullscreenChanged.subscribe {
             Logger.i(TAG, "onFullscreenChanged ${it}");
-
+            _isFullscreen = it
+            updatePrivateModeVisibility()
             if (it) {
-                _buttonIncognito.elevation = -99f;
-                _buttonIncognito.alpha = 0f;
+                _rootInsetsController.enterFullscreen(allowCutoutShortEdges = Settings.instance.playback.allowVideoToGoUnderCutout)
             } else {
-                if (StateApp.instance.privateMode) {
-                    _buttonIncognito.elevation = 99f;
-                    _buttonIncognito.alpha = 1f;
-                } else {
-                    _buttonIncognito.elevation = -99f;
-                    _buttonIncognito.alpha = 0f;
-                }
+                _rootInsetsController.exitFullscreen()
             }
+        }
+
+        _fragVideoDetail.onMinimize.subscribe {
+            updatePrivateModeVisibility()
+        }
+
+        _fragVideoDetail.onMaximized.subscribe {
+            updatePrivateModeVisibility()
         }
 
         StatePlayer.instance.also {
@@ -446,6 +522,8 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         _fragMainPlaylist.topBar = _fragTopBarNavigation;
         _fragMainRemotePlaylist.topBar = _fragTopBarNavigation;
         _fragPostDetail.topBar = _fragTopBarNavigation;
+        _fragArticleDetail.topBar = _fragTopBarNavigation;
+        _fragWebDetail.topBar = _fragTopBarNavigation;
         _fragWatchlist.topBar = _fragTopBarNavigation;
         _fragHistory.topBar = _fragTopBarNavigation;
         _fragSourceDetail.topBar = _fragTopBarNavigation;
@@ -453,6 +531,17 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         _fragImportSubscriptions.topBar = _fragTopBarImport;
         _fragImportPlaylists.topBar = _fragTopBarImport;
         _fragSubGroupList.topBar = _fragTopBarAdd;
+        _fragLibrary.topBar = _fragTopBarGeneral;
+        _fragLibraryAlbums.topBar = _fragTopBarNavigation;
+        _fragLibraryAlbum.topBar = _fragTopBarNavigation;
+        _fragLibraryArtists.topBar = _fragTopBarNavigation;
+        _fragLibraryArtist.topBar = _fragTopBarNavigation;
+        _fragLibraryVideos.topBar = _fragTopBarNavigation;
+        _fragLibraryFiles.topBar = _fragTopBarFiles;
+        _fragLibrarySearch.topBar = _fragTopBarSearch;
+        _fragSettings.topBar = _fragTopBarNavigation;
+        _fragDeveloper.topBar = _fragTopBarNavigation;
+        _fragNotifications.topBar = _fragTopBarGeneral;
 
         _fragBrowser.topBar = _fragTopBarNavigation;
 
@@ -478,7 +567,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         defaultTab.action(_fragBotBarMenu);
         StateSubscriptions.instance;
 
-        fragCurrent.onShown(null, false);
+        fragCurrent?.onShown(null, false);
 
         //Other stuff
         rootView.progress = 0f;
@@ -531,6 +620,10 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             })
 
             sharedPreferences.edit().putBoolean("IsFirstBoot", false).apply()
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && Settings.instance.autoUpdate.isAutoUpdateEnabled() && Settings.instance.autoUpdate.shouldBackgroundDownload) {
+            requestNotificationPermissions("You have enabled background updating.\n\nGrayjay uses notifications to inform you when a new app update is available.");
         }
 
         val submissionStatus = FragmentedStorage.get<StringStorage>("subscriptionSubmissionStatus")
@@ -590,6 +683,8 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                 }, UIDialogs.ActionStyle.PRIMARY)
             )
         }
+
+        //startActivity(Intent(this, TestActivity::class.java))
     }
 
     /*
@@ -613,8 +708,23 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             UIDialogs.toast(this, "No external file permissions\nExporting and auto backups will not work");
     }*/
 
+    private var _qrCodeLoadingDialog: AlertDialog? = null
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        _rootInsetsController.onConfigurationChanged()
+    }
+
     fun showUrlQrCodeScanner() {
         try {
+            _qrCodeLoadingDialog = UIDialogs.showDialog(this, R.drawable.ic_loader_animated, true,
+                "Launching QR scanner",
+                "Make sure your camera is enabled", null, -2,
+                UIDialogs.Action("Close", {
+                    _qrCodeLoadingDialog?.dismiss()
+                    _qrCodeLoadingDialog = null
+                }));
+
             val integrator = IntentIntegrator(this)
             integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
             integrator.setPrompt(getString(R.string.scan_a_qr_code))
@@ -630,35 +740,46 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         }
     }
 
+    @OptIn(UnstableApi::class)
+    private fun updatePrivateModeVisibility() {
+        if (_privateModeEnabled && (_fragVideoDetail.state == State.CLOSED || !_pictureInPictureEnabled && !_isFullscreen)) {
+            _buttonIncognito.elevation = 99f;
+            _buttonIncognito.alpha = 1f;
+            _buttonIncognito.translationY = if (_fragVideoDetail.state == State.MINIMIZED) -60.dp(resources).toFloat() else 0f
+        } else {
+            _buttonIncognito.elevation = -99f;
+            _buttonIncognito.alpha = 0f;
+        }
+    }
+
     override fun onResume() {
         super.onResume();
-        Logger.v(TAG, "onResume")
+        Logger.w(TAG, "onResume [$mainId]")
         _isVisible = true;
     }
 
     override fun onPause() {
         super.onPause();
-        Logger.v(TAG, "onPause")
+        Logger.w(TAG, "onPause [$mainId]")
         _isVisible = false;
+
+        _qrCodeLoadingDialog?.dismiss()
+        _qrCodeLoadingDialog = null
     }
 
     override fun onStop() {
         super.onStop()
-        Logger.v(TAG, "_wasStopped = true");
+        Logger.w(TAG, "onStop [$mainId]");
         _wasStopped = true;
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent);
         handleIntent(intent);
     }
 
-    private fun handleIntent(intent: Intent?) {
-        if (intent == null)
-            return;
+    private fun handleIntent(intent: Intent) {
         Logger.i(TAG, "handleIntent started by " + intent.action);
-
-
         var targetData: String? = null;
 
         when (intent.action) {
@@ -678,7 +799,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
             "VIDEO" -> {
                 val url = intent.getStringExtra("VIDEO");
-                navigate(_fragVideoDetail, url);
+                navigateWhenReady(_fragVideoDetail, url);
             }
 
             "IMPORT_OPTIONS" -> {
@@ -696,11 +817,11 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                     "Sources" -> {
                         runBlocking {
                             StatePlatform.instance.updateAvailableClients(this@MainActivity, true) //Ideally this is not needed..
-                            navigate(_fragMainSources);
+                            navigateWhenReady(_fragMainSources);
                         }
                     };
                     "BROWSE_PLUGINS" -> {
-                        navigate(_fragBrowser, BrowserFragment.NavigateOptions("https://plugins.grayjay.app/phone.html", mapOf(
+                        navigateWhenReady(_fragBrowser, BrowserFragment.NavigateOptions("https://plugins.grayjay.app/phone.html", mapOf(
                             Pair("grayjay") { req ->
                                 StateApp.instance.contextOrNull?.let {
                                     if (it is MainActivity) {
@@ -718,8 +839,12 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
         try {
             if (targetData != null) {
-                runBlocking {
-                    handleUrlAll(targetData)
+                lifecycleScope.launch(Dispatchers.Main) {
+                    try {
+                        handleUrlAll(targetData, intent)
+                    } catch (e: Throwable) {
+                        Logger.e(TAG, "Unhandled exception in handleUrlAll", e)
+                    }
                 }
             }
         } catch (ex: Throwable) {
@@ -727,8 +852,9 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         }
     }
 
-    suspend fun handleUrlAll(url: String) {
+    suspend fun handleUrlAll(url: String, openIntent: Intent? = null) {
         val uri = Uri.parse(url)
+        val intent = openIntent ?: this.intent;
         when (uri.scheme) {
             "grayjay" -> {
                 if (url.startsWith("grayjay://license/")) {
@@ -747,19 +873,19 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                     startActivity(intent);
                 } else if (url.startsWith("grayjay://video/")) {
                     val videoUrl = url.substring("grayjay://video/".length);
-                    navigate(_fragVideoDetail, videoUrl);
+                    navigateWhenReady(_fragVideoDetail, videoUrl);
                 } else if (url.startsWith("grayjay://channel/")) {
                     val channelUrl = url.substring("grayjay://channel/".length);
-                    navigate(_fragMainChannel, channelUrl);
+                    navigateWhenReady(_fragMainChannel, channelUrl);
                 }
             }
 
             "content" -> {
-                if (!handleContent(url, intent.type)) {
+                if (!handleContent(url, intent?.type)) {
                     UIDialogs.showSingleButtonDialog(
                         this,
                         R.drawable.ic_play,
-                        getString(R.string.unknown_content_format) + " [${url}]\n[${intent.type}]",
+                        getString(R.string.unknown_content_format) + " [${url}]\n[${intent?.type}]",
                         "Ok",
                         { });
                 }
@@ -816,29 +942,29 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
         return withContext(Dispatchers.IO) {
             Logger.i(TAG, "handleUrl(url=$url) on IO");
-            if (StatePlatform.instance.hasEnabledVideoClient(url)) {
+            if (StatePlatform.instance.hasEnabledContentClient(url)) {
                 Logger.i(TAG, "handleUrl(url=$url) found video client");
-                lifecycleScope.launch(Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     if (position > 0)
-                        navigate(_fragVideoDetail, UrlVideoWithTime(url, position.toLong(), true));
+                        navigateWhenReady(_fragVideoDetail, UrlVideoWithTime(url, position.toLong(), true));
                     else
-                        navigate(_fragVideoDetail, url);
+                        navigateWhenReady(_fragVideoDetail, url);
 
                     _fragVideoDetail.maximizeVideoDetail(true);
                 }
                 return@withContext true;
             } else if (StatePlatform.instance.hasEnabledChannelClient(url)) {
                 Logger.i(TAG, "handleUrl(url=$url) found channel client");
-                lifecycleScope.launch(Dispatchers.Main) {
-                    navigate(_fragMainChannel, url);
+                withContext(Dispatchers.Main) {
+                    navigateWhenReady(_fragMainChannel, url);
                     delay(100);
                     _fragVideoDetail.minimizeVideoDetail();
                 };
                 return@withContext true;
             } else if (StatePlatform.instance.hasEnabledPlaylistClient(url)) {
                 Logger.i(TAG, "handleUrl(url=$url) found playlist client");
-                lifecycleScope.launch(Dispatchers.Main) {
-                    navigate(_fragMainRemotePlaylist, url);
+                withContext(Dispatchers.Main) {
+                    navigateWhenReady(_fragMainRemotePlaylist, url);
                     delay(100);
                     _fragVideoDetail.minimizeVideoDetail();
                 };
@@ -880,6 +1006,12 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         } else if (file.lowercase().endsWith(".txt") || mime == "text/plain") {
             return handleUnknownText(String(data));
         }
+        else if (mime?.let { it.startsWith("video/") || it.startsWith("audio/") } ?: false) {
+            val mediaItem = LocalVideoDetails.fromContent(file, mime);
+            navigateWhenReady(_fragVideoDetail, mediaItem);
+            return true;
+        }
+
         return false;
     }
 
@@ -994,7 +1126,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         Logger.i(TAG, "handleFCast");
 
         try {
-            StateCasting.instance.handleUrl(this, url)
+            StateCasting.instance.handleUrl(url)
             return true;
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to parse FCast URL '${url}'.", e)
@@ -1026,7 +1158,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         if (_fragVideoDetail.state == VideoDetailFragment.State.MAXIMIZED && _fragVideoDetail.onBackPressed())
             return;
 
-        if (!fragCurrent.onBackPressed())
+        if (!(fragCurrent?.onBackPressed() ?: true))
             closeSegment();
     }
 
@@ -1050,16 +1182,36 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         Logger.v(TAG, "onPictureInPictureModeChanged isInPictureInPictureMode=$isInPictureInPictureMode isStop=$isStop")
         _fragVideoDetail.onPictureInPictureModeChanged(isInPictureInPictureMode, isStop, newConfig);
         Logger.v(TAG, "onPictureInPictureModeChanged Ready");
+
+        _pictureInPictureEnabled = isInPictureInPictureMode
+        updatePrivateModeVisibility()
     }
 
     override fun onDestroy() {
         super.onDestroy();
-        Logger.v(TAG, "onDestroy")
-        StateApp.instance.mainAppDestroyed(this);
+        Logger.w(TAG, "onDestroy [$mainId]")
+        StateApp.instance.mainAppDestroyed(this, mainId);
     }
 
     inline fun <reified T> isFragmentActive(): Boolean {
         return fragCurrent is T;
+    }
+
+    fun navigateWhenReady(segment: MainFragment, parameter: Any? = null, withHistory: Boolean = true, isBack: Boolean = false) {
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            navigate(segment, parameter, withHistory, isBack)
+        } else {
+            lifecycleScope.launch {
+                lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {
+                    navigate(segment, parameter, withHistory, isBack)
+                }
+            }
+        }
+    }
+
+    inline fun <reified T : Fragment> navigate(parameter: Any? = null, withHistory: Boolean = true, isBack: Boolean = false) {
+        val segment = getFragment<T>();
+        navigate(segment as MainFragment, parameter, withHistory, isBack);
     }
 
     /**
@@ -1084,27 +1236,27 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                 return;
             }
 
-            fragCurrent.onHide();
+            fragCurrent?.onHide();
 
             if (segment.isMainView) {
                 var transaction = supportFragmentManager.beginTransaction();
                 if (segment.topBar != null) {
-                    if (segment.topBar != fragCurrent.topBar) {
+                    if (segment.topBar != fragCurrent?.topBar) {
                         transaction = transaction
                             .show(segment.topBar as Fragment)
                             .replace(R.id.fragment_top_bar, segment.topBar as Fragment);
-                        fragCurrent.topBar?.onHide();
+                        fragCurrent?.topBar?.onHide();
                     }
-                } else if (fragCurrent.topBar != null)
-                    transaction.hide(fragCurrent.topBar as Fragment);
+                } else if (fragCurrent?.topBar != null)
+                    transaction.hide(fragCurrent?.topBar as Fragment);
 
                 transaction = transaction.replace(R.id.fragment_main, segment);
 
                 if (segment.hasBottomBar) {
-                    if (!fragCurrent.hasBottomBar)
+                    if (!(fragCurrent?.hasBottomBar ?: false))
                         transaction = transaction.show(_fragBotBarMenu);
                 } else {
-                    if (fragCurrent.hasBottomBar)
+                    if (fragCurrent?.hasBottomBar ?: false)
                         transaction = transaction.hide(_fragBotBarMenu);
                 }
                 transaction.commitNow();
@@ -1117,12 +1269,11 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                 }
             }
 
-            if (fragCurrent.isHistory && withHistory && _queue.lastOrNull() != fragCurrent)
-                _queue.add(Pair(fragCurrent, _parameterCurrent));
+            if (fragCurrent?.isHistory ?: false && withHistory && _queue.lastOrNull() != fragCurrent)
+                _queue.add(Pair(fragCurrent!!, _parameterCurrent));
 
-            if (segment.isOverlay && !fragCurrent.isOverlay && withHistory)// && fragCurrent.isHistory)
+            if (segment.isOverlay && !(fragCurrent?.isOverlay ?: false) && withHistory)// && fragCurrent.isHistory)
                 fragBeforeOverlay = fragCurrent;
-
 
             fragCurrent = segment;
             _parameterCurrent = parameter;
@@ -1152,11 +1303,24 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
                 navigate(last.first, last.second, false, true);
             } else {
                 if (_fragVideoDetail.state == VideoDetailFragment.State.CLOSED) {
+                    Logger.i(TAG, "Closing activity because _fragVideoDetail.state == closed");
                     finish();
                 } else {
+                    //UIDialogs.toast("Grayjay continues in background because of an open video.")
+                    if(Settings.instance.playback.isBackgroundPictureInPicture()) {
+                        try {
+                            _fragVideoDetail._viewDetail?.startPictureInPicture();
+                            _fragVideoDetail?.forcePictureInPicture();
+                        } catch (ex: Throwable) {
+                        } //Fail silently
+                    }
+                    else
+                     moveTaskToBack(false);
+                    /*
                     UIDialogs.showConfirmationDialog(this, "There is a video playing, are you sure you want to exit the app?", {
                         finish();
                     })
+                    */
                 }
             }
         }
@@ -1175,6 +1339,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             VideoDetailFragment::class -> _fragVideoDetail as T;
             MenuBottomBarFragment::class -> _fragBotBarMenu as T;
             GeneralTopBarFragment::class -> _fragTopBarGeneral as T;
+            FilesTopBarFragment::class -> _fragTopBarFiles as T;
             SearchTopBarFragment::class -> _fragTopBarSearch as T;
             CreatorsFragment::class -> _fragMainSubscriptions as T;
             CommentsFragment::class -> _fragMainComments as T;
@@ -1186,8 +1351,11 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             PlaylistFragment::class -> _fragMainPlaylist as T;
             RemotePlaylistFragment::class -> _fragMainRemotePlaylist as T;
             PostDetailFragment::class -> _fragPostDetail as T;
+            ArticleDetailFragment::class -> _fragArticleDetail as T;
+            WebDetailFragment::class -> _fragWebDetail as T;
             WatchLaterFragment::class -> _fragWatchlist as T;
             HistoryFragment::class -> _fragHistory as T;
+            ShortsFragment::class -> _fragShorts as T;
             SourceDetailFragment::class -> _fragSourceDetail as T;
             DownloadsFragment::class -> _fragDownloads as T;
             ImportSubscriptionsFragment::class -> _fragImportSubscriptions as T;
@@ -1196,6 +1364,18 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             BuyFragment::class -> _fragBuy as T;
             SubscriptionGroupFragment::class -> _fragSubGroup as T;
             SubscriptionGroupListFragment::class -> _fragSubGroupList as T;
+            LibraryFragment::class -> _fragLibrary as T;
+            LibraryAlbumsFragment::class -> _fragLibraryAlbums as T;
+            LibraryAlbumFragment::class -> _fragLibraryAlbum as T;
+            LibraryArtistsFragment::class -> _fragLibraryArtists as T;
+            LibraryArtistFragment::class -> _fragLibraryArtist as T;
+            LibraryVideosFragment::class -> _fragLibraryVideos as T;
+            LibraryFilesFragment::class -> _fragLibraryFiles as T;
+            LibrarySearchFragment::class -> _fragLibrarySearch as T;
+            NotificationOverlayView.Frag::class -> _fragNotifications as T;
+            SettingsFragment:: class -> _fragSettings as T;
+            DeveloperFragment::class -> _fragDeveloper as T;
+            LoginFragment::class -> _fragLogin as T;
             else -> throw IllegalArgumentException("Fragment type ${T::class.java.name} is not available in MainActivity");
         }
     }
@@ -1203,7 +1383,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
 
     private fun updateSegmentPaddings() {
         var paddingBottom = 0f;
-        if (fragCurrent.hasBottomBar)
+        if (fragCurrent?.hasBottomBar ?: false)
             paddingBottom += HEIGHT_MENU_DP;
 
         _fragContainerOverlay.setPadding(
@@ -1218,6 +1398,23 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
             0, 0, 0, TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, paddingBottom, resources.displayMetrics)
                 .toInt()
         );
+    }
+
+    var _callbackPermissionAudio: ((Boolean)->Unit)? = null;
+    var _callbackPermissionVideo: ((Boolean)->Unit)? = null;
+    val permissionReqAudio = registerForActivityResult(ActivityResultContracts.RequestPermission(), { isGranted ->
+        _callbackPermissionAudio?.invoke(isGranted);
+    });
+    val permissionReqVideo = registerForActivityResult(ActivityResultContracts.RequestPermission(), { isGranted ->
+        _callbackPermissionVideo?.invoke(isGranted);
+    });
+    fun requestPermissionAudio(cb: ((Boolean)->Unit)? = null) {
+        _callbackPermissionAudio = cb;
+        permissionReqAudio.launch(android.Manifest.permission.READ_MEDIA_AUDIO);
+    }
+    fun requestPermissionVideo(cb: ((Boolean)->Unit)? = null) {
+        _callbackPermissionVideo = cb;
+        permissionReqVideo.launch(android.Manifest.permission.READ_MEDIA_VIDEO);
     }
 
 
